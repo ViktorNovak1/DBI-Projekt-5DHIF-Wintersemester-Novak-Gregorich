@@ -2,7 +2,9 @@
 """
 Faker-based data generator + loader for:
 - PostgreSQL 17 (tables: pc_product_categories, p_products, s_stores, o_offers)
-- MongoDB 7   (collections with the same names and unique indexes)
+- MongoDB 7   
+    * embedded model   -> collection: s_stores_embedded (with embedded offers)
+    * referencing model-> collections: pc_product_categories_referencing, p_products_referencing, s_stores_referencing, o_offers_referencing
 
 Defaults assume Docker containers are mapped to localhost:
   Postgres: postgres://admin:admin@localhost:5432/postgres
@@ -14,6 +16,16 @@ You can override via env vars:
 
 Requires: psycopg2-binary, pymongo, faker
     pip install psycopg2-binary pymongo faker
+
+Usage examples:
+  # Same behavior as before (MongoDB embedded only)
+  python faker_loader_pg_mongo_referencing_and_embedded.py
+
+  # MongoDB referencing only
+  python faker_loader_pg_mongo_referencing_and_embedded.py --mongodb-mode referencing
+
+  # Seed both MongoDB models (embedded + referencing)
+  python faker_loader_pg_mongo_referencing_and_embedded.py --mongodb-mode both
 """
 
 import os
@@ -251,8 +263,8 @@ def load_postgres(categories: List[Category], products: List[Product], stores: L
             conn.close()
 
 
-# ---------- MongoDB load (cleanup + embedded insert) ----------
-def load_mongodb(categories: List[Category], products: List[Product], stores: List[Store], offers: List[Offer]) -> None:
+# ---------- MongoDB (embedded) ----------
+def load_mongodb_embedded(categories: List[Category], products: List[Product], stores: List[Store], offers: List[Offer]) -> None:
     from pymongo import MongoClient, errors
 
     try:
@@ -268,14 +280,14 @@ def load_mongodb(categories: List[Category], products: List[Product], stores: Li
     # --- CLEANUP: drop target + legacy collections if present
     try:
         existing = set(db.list_collection_names())
-        to_drop = {"s_stores", "pc_product_categories", "p_products", "o_offers"} & existing
+        to_drop = {"s_stores_embedded"} & existing
         for name in to_drop:
             db[name].drop()
-        print(f"[MongoDB] Cleanup done (dropped collections: {', '.join(to_drop) if to_drop else 'none'}).")
+        print(f"[MongoDB][embedded] Cleanup done (dropped collections: {', '.join(to_drop) if to_drop else 'none'}).")
     except Exception as e:
-        print(f"[MongoDB] Cleanup warning: {e}")
+        print(f"[MongoDB][embedded] Cleanup warning: {e}")
 
-    col_store = db["s_stores"]  # single collection with embedded offers
+    col_store = db["s_stores_embedded"]  # single collection with embedded offers
 
     # Helpful indexes
     try:
@@ -285,7 +297,7 @@ def load_mongodb(categories: List[Category], products: List[Product], stores: Li
         # Prevent duplicate product offers per store
         col_store.create_index([("id", 1), ("offers.product.id", 1)], unique=True, sparse=True)
     except Exception as e:
-        print(f"[MongoDB] Index creation warning: {e}")
+        print(f"[MongoDB][embedded] Index creation warning: {e}")
 
     # Build lookups
     cat_by_id = {c.id: c.name for c in categories}
@@ -330,10 +342,10 @@ def load_mongodb(categories: List[Category], products: List[Product], stores: Li
             res = col_store.insert_many(docs, ordered=False)
             inserted = len(res.inserted_ids)
     except errors.BulkWriteError as bwe:
-        print(f"[MongoDB] Bulk insert warning: {bwe.details}")
+        print(f"[MongoDB][embedded] Bulk insert warning: {bwe.details}")
         inserted = bwe.details.get("nInserted", 0)
     except Exception as e:
-        print(f"[MongoDB] Error inserting stores: {e}")
+        print(f"[MongoDB][embedded] Error inserting stores: {e}")
 
     # Final counts
     try:
@@ -341,10 +353,129 @@ def load_mongodb(categories: List[Category], products: List[Product], stores: Li
         pipeline = [{"$unwind": {"path": "$offers", "preserveNullAndEmptyArrays": False}}, {"$count": "n"}]
         aggr = list(col_store.aggregate(pipeline))
         total_offers = aggr[0]["n"] if aggr else 0
-        print(f"[MongoDB] Inserts — stores inserted:{inserted}")
-        print(f"[MongoDB] Docs now in DB — stores:{store_count} offers:{total_offers}")
+        print(f"[MongoDB][embedded] Inserts — stores inserted:{inserted}")
+        print(f"[MongoDB][embedded] Docs now in DB — stores:{store_count} offers:{total_offers}")
     except Exception as e:
-        print(f"[MongoDB] Count/Aggregation error: {e}")
+        print(f"[MongoDB][embedded] Count/Aggregation error: {e}")
+    finally:
+        client.close()
+
+
+# ---------- MongoDB (referencing) ----------
+def load_mongodb_referencing(categories: List[Category], products: List[Product], stores: List[Store], offers: List[Offer]) -> None:
+    """Seed a relational-style model in MongoDB using separate collections and ID references.
+
+    Collections:
+      - pc_product_categories_referencing: { _id: str(UUID), name }
+      - p_products_referencing:            { _id: str(UUID), categoryId: str(UUID), ean, name, retailPrice }
+      - s_stores_referencing:              { _id: str(UUID), name, url }
+      - o_offers_referencing:              { storeId: str(UUID), productId: str(UUID), price, amount }
+
+    Notes:
+      * MongoDB cannot enforce foreign keys; we create unique indexes and insert in a referentially-safe order.
+      * Composite uniqueness on (storeId, productId) for o_offers_referencing.
+    """
+    from pymongo import MongoClient, ASCENDING, errors
+
+    try:
+        client = MongoClient(MONGODB_URI, serverSelectionTimeoutMS=5000)
+        client.admin.command("ping")
+        print("[MongoDB] Connection successful.")
+    except Exception as e:
+        print(f"[MongoDB] Connection FAILED: {e}")
+        return
+
+    db = client[MONGODB_DB]
+
+    # --- CLEANUP: drop collections for referencing model
+    try:
+        existing = set(db.list_collection_names())
+        to_drop = {"pc_product_categories_referencing", "p_products_referencing", "s_stores_referencing", "o_offers_referencing"} & existing
+        for name in to_drop:
+            db[name].drop()
+        print(f"[MongoDB][ref] Cleanup done (dropped collections: {', '.join(to_drop) if to_drop else 'none'}).")
+    except Exception as e:
+        print(f"[MongoDB][ref] Cleanup warning: {e}")
+
+    # We suffix collections with _referencing to avoid clashing with embedded model (_embedded)
+    col_cat = db["pc_product_categories_referencing"]
+    col_prod = db["p_products_referencing"]
+    col_store = db["s_stores_referencing"]
+    col_offer = db["o_offers_referencing"]
+
+    # --- Indexes ---
+    try:
+        col_cat.create_index([("name", ASCENDING)], unique=True)
+        col_prod.create_index([("ean", ASCENDING)], unique=True)
+        col_prod.create_index([("categoryId", ASCENDING)], name="fk_categoryId")
+        col_store.create_index([("name", ASCENDING)], unique=True)
+        col_store.create_index([("url", ASCENDING)], unique=True)
+
+        # Composite uniqueness to simulate PK on (storeId, productId)
+        col_offer.create_index([("storeId", ASCENDING), ("productId", ASCENDING)], unique=True, name="pk_store_product")
+        col_offer.create_index([("storeId", ASCENDING)], name="fk_storeId")
+        col_offer.create_index([("productId", ASCENDING)], name="fk_productId")
+    except Exception as e:
+        print(f"[MongoDB][ref] Index creation warning: {e}")
+
+    # --- Inserts in referentially-safe order ---
+    try:
+        if categories:
+            col_cat.insert_many([
+                {"_id": str(c.id), "name": c.name}
+                for c in categories
+            ], ordered=False)
+        if products:
+            col_prod.insert_many([
+                {
+                    "_id": str(p.id),
+                    "categoryId": str(p.categoryId),
+                    "ean": p.ean,
+                    "name": p.name,
+                    "retailPrice": float(p.retailPrice),
+                }
+                for p in products
+            ], ordered=False)
+        if stores:
+            col_store.insert_many([
+                {"_id": str(s.id), "name": s.name, "url": s.url}
+                for s in stores
+            ], ordered=False)
+        if offers:
+            # Verify that referenced IDs exist (best-effort) before inserting
+            prod_ids = set(doc["_id"] for doc in col_prod.find({}, {"_id": 1}))
+            store_ids = set(doc["_id"] for doc in col_store.find({}, {"_id": 1}))
+
+            offer_docs = []
+            skipped = 0
+            for o in offers:
+                sid = str(o.storeId)
+                pid = str(o.productId)
+                if sid in store_ids and pid in prod_ids:
+                    offer_docs.append({
+                        "storeId": sid,
+                        "productId": pid,
+                        "price": float(o.price),
+                        "amount": int(o.amount),
+                    })
+                else:
+                    skipped += 1
+            if offer_docs:
+                col_offer.insert_many(offer_docs, ordered=False)
+            if skipped:
+                print(f"[MongoDB][ref] Skipped {skipped} offers with missing references (should be 0).")
+
+        # Counts
+        cat_count = col_cat.count_documents({})
+        prod_count = col_prod.count_documents({})
+        store_count = col_store.count_documents({})
+        offer_count = col_offer.count_documents({})
+        print(f"[MongoDB][ref] Docs now in DB — categories:{cat_count} products:{prod_count} stores:{store_count} offers:{offer_count}")
+
+    except errors.BulkWriteError as bwe:
+        print(f"[MongoDB][ref] Bulk insert warning: {bwe.details}")
+    except Exception as e:
+        print(f"[MongoDB][ref] ERROR while inserting: {e}")
     finally:
         client.close()
 
@@ -361,6 +492,8 @@ def parse_args():
                    help="Total number of offers rows (unique (storeId, productId) pairs).")
     p.add_argument("--only-postgres", action="store_true", help="Load only into PostgreSQL.")
     p.add_argument("--only-mongodb", action="store_true", help="Load only into MongoDB.")
+    p.add_argument("--mongodb-mode", choices=["embedded", "referencing", "both"], default="embedded",
+                   help="Choose MongoDB data model to seed: embedded (default), referencing, or both.")
     return p.parse_args()
 
 # ---------- Main ----------
@@ -382,7 +515,6 @@ def main():
     )
     print(f"Generated: {len(categories)} categories, {len(products)} products, {len(stores)} stores, {len(offers)} offers")
 
-    # Decide targets
     load_pg = True
     load_mongo = True
     if args.only_postgres and args.only_mongodb:
@@ -397,8 +529,12 @@ def main():
         load_postgres(categories, products, stores, offers)
 
     if load_mongo:
-        print("\n=== Loading into MongoDB ===")
-        load_mongodb(categories, products, stores, offers)
+        if args.mongodb_mode in ("embedded", "both"):
+            print("\n=== Loading into MongoDB (embedded model) ===")
+            load_mongodb_embedded(categories, products, stores, offers)
+        if args.mongodb_mode in ("referencing", "both"):
+            print("\n=== Loading into MongoDB (referencing model) ===")
+            load_mongodb_referencing(categories, products, stores, offers)
 
 if __name__ == "__main__":
     main()
