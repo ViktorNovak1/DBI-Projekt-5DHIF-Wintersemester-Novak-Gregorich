@@ -1,0 +1,57 @@
+import pool from "./database.js";
+
+
+
+
+export async function getAllProducts(limit = 10, offset = 0) {
+    const result = await pool.query('SELECT * FROM p_products LIMIT $1 OFFSET $2', [limit, offset]);
+    return result.rows;
+}
+
+
+
+//-----------------------------------------------
+export async function getAllStores(limit = 10, offset = 0) {
+    const result = await pool.query('SELECT * FROM s_stores LIMIT $1 OFFSET $2', [limit, offset]);
+    return result.rows;
+}
+
+export async function getAllStoresWithOfferCount(limit = 10, offset = 0) {
+    const result = await pool.query('SELECT *,(select count(*) from o_offers o where o.storeId = s.id) as offerCount FROM s_stores s LIMIT $1 OFFSET $2', [limit, offset]);
+    return result.rows;
+}
+//-----------------------------------------------
+export async function getAllCategories(limit = 10, offset = 0) {
+    const result = await pool.query('SELECT * FROM pc_product_categories LIMIT $1 OFFSET $2', [limit, offset]);
+    return result.rows;
+}
+//-----------------------------------------------
+export async function getAllOffers(limit = 10, offset = 0) {
+    const result = await pool.query('SELECT * FROM o_offers LIMIT $1 OFFSET $2', [limit, offset]);
+    return result.rows;
+}
+
+
+export async function getOffersFromStore(limit = 10, offset = 0, storeId) {
+
+    const sql = `select storeId,
+       productId,
+       price,
+       retailPrice,
+       amount,
+       ean,
+       p_products.name as productName,
+       pc_product_categories.name as categoryName
+       from o_offers
+         inner join p_products on p_products.id = o_offers.productId
+         inner join pc_product_categories on p_products.categoryId = pc_product_categories.id
+         where storeId = $1
+         LIMIT $2
+         OFFSET $3`;
+
+
+
+
+    const result = await pool.query(sql, [storeId, limit, offset]);
+    return result.rows;
+}
