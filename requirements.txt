@@ -1,5 +1,0 @@
-faker
-psycopg2-binary
-pymongo
-psycopg2-binary   
-tabulate
