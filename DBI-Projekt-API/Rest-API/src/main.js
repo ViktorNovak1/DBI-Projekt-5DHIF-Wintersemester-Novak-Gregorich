@@ -1,8 +1,11 @@
 import express from 'express';
+import cors from 'cors';
 import { getAllProducts, getAllCategories, getAllOffers, getAllStores, getAllStoresWithOfferCount, getOffersFromStore } from './postgres_service.js';
 
 const app = express();
-const port = process.env.PORT || 3000;
+const port = process.env.PORT || 3001;
+
+app.use(cors());
 
 // Products
 app.get('/postgres/products', async (req, res) => {

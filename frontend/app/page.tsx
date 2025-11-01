@@ -1,6 +1,7 @@
 'use client';
 
 import React, { useEffect, useMemo, useState } from 'react';
+import axios from 'axios'; // Importiere axios
 
 // shadcn/ui components
 import { Button } from '@/components/ui/button';
@@ -34,7 +35,7 @@ import { ToggleGroup, ToggleGroupItem } from '@/components/ui/toggle-group';
 type Source = 'postgres' | 'mongo-embedded' | 'mongo-referencing';
 
 // Wire up the endpoints we expect your backend to expose:
-//   GET    /<prefix>/stores?page=1&limit=10            -> { page, limit, total?, stores: [ { id, name, url, offercount } ] }
+//   GET    /<prefix>/stores/withOfferCount?page=1&limit=10 -> { page, limit, total?, stores: [ { id, name, url, offercount } ] }
 //   POST   /<prefix>/stores                            -> { id, name, url }
 //   PUT    /<prefix>/stores/:id                        -> { id, name, url }
 //   DELETE /<prefix>/stores/:id                        -> { ok: true }
@@ -71,17 +72,18 @@ function useStores(prefix: string, page: number, limit: number) {
   const [rows, setRows] = useState<StoreRow[]>([]);
   const [total, setTotal] = useState<number | undefined>(undefined);
 
+  const BASE_URL = 'http://localhost:3001'; // API Base URL
+  
   useEffect(() => {
     let cancelled = false;
     const controller = new AbortController();
-    const url = `${prefix}/stores?page=${page}&limit=${limit}`;
+    const url = `${BASE_URL}${prefix}/stores/withOfferCount?page=${page}&limit=${limit}`;  // Combine base URL with prefix
     setLoading(true);
     setError(null);
-    fetch(url, { signal: controller.signal })
-      .then(async (r) => {
-        if (!r.ok) throw new Error(`${r.status} ${r.statusText}`);
-        const json: ListResponse = await r.json();
+    axios.get(url, { signal: controller.signal })
+      .then((r) => {
         if (cancelled) return;
+        const json: ListResponse = r.data;
         setRows(pickRows(json));
         setTotal(json.total);
         setLoading(false);
@@ -109,12 +111,13 @@ export default function Page() {
       document.documentElement.classList.add('dark');
     }
   }, []);
-  // Persist selected source in localStorage (so it survives reloads)
+  
   const [source, setSource] = useState<Source>(() => {
     if (typeof window === 'undefined') return 'postgres';
     const saved = window.localStorage.getItem('db_source') as Source | null;
     return saved ?? 'postgres';
   });
+
   useEffect(() => {
     if (typeof window !== 'undefined') {
       window.localStorage.setItem('db_source', source);
@@ -122,11 +125,11 @@ export default function Page() {
   }, [source]);
 
   const apiPrefix =
-    source === 'postgres'
-      ? '/postgres'
-      : source === 'mongo-embedded'
-      ? '/mongo-embedded'
-      : '/mongo-referencing';
+  source === 'postgres'
+    ? `/postgres`
+    : source === 'mongo-embedded'
+    ? `/mongo-embedded`
+    : `/mongo-referencing`;
 
   const [page, setPage] = useState(1);
   const [limit, setLimit] = useState(10);
@@ -135,14 +138,12 @@ export default function Page() {
   const totalPages = useMemo(() => {
     if (typeof total === 'number' && total >= 0)
       return Math.max(1, Math.ceil(total / limit));
-    // fallback when API doesn't return total: show next if we got a full page
     return undefined;
   }, [total, limit]);
 
   const canPrev = page > 1;
-  const canNext = totalPages ? page < totalPages : rows.length === limit; // optimistic fallback
+  const canNext = totalPages ? page < totalPages : rows.length === limit;
 
-  // Create / Edit modal state
   const [createOpen, setCreateOpen] = useState(false);
   const [editOpen, setEditOpen] = useState(false);
   const [editId, setEditId] = useState<string | null>(null);
@@ -158,7 +159,6 @@ export default function Page() {
   }
 
   async function refetch() {
-    // trigger useEffect by toggling page if possible, else reassign same state
     setPage((p) => p);
   }
 
@@ -171,12 +171,11 @@ export default function Page() {
     try {
       setBusy(true);
       setMsg(null);
-      const r = await fetch(`${apiPrefix}/stores`, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ name: formName.trim(), url: formUrl.trim() }),
+      const r = await axios.post(`${apiPrefix}/stores`, {
+        name: formName.trim(),
+        url: formUrl.trim(),
       });
-      if (!r.ok) throw new Error(`${r.status} ${r.statusText}`);
+      if (r.status !== 200) throw new Error(`${r.status} ${r.statusText}`);
       setCreateOpen(false);
       resetForm();
       await refetch();
@@ -205,12 +204,11 @@ export default function Page() {
     try {
       setBusy(true);
       setMsg(null);
-      const r = await fetch(`${apiPrefix}/stores/${encodeURIComponent(editId)}`, {
-        method: 'PUT',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ name: formName.trim(), url: formUrl.trim() }),
+      const r = await axios.put(`${apiPrefix}/stores/${encodeURIComponent(editId)}`, {
+        name: formName.trim(),
+        url: formUrl.trim(),
       });
-      if (!r.ok) throw new Error(`${r.status} ${r.statusText}`);
+      if (r.status !== 200) throw new Error(`${r.status} ${r.statusText}`);
       setEditOpen(false);
       setEditId(null);
       resetForm();
@@ -226,10 +224,8 @@ export default function Page() {
     if (!confirm('Diesen Store wirklich löschen?')) return;
     try {
       setBusy(true);
-      const r = await fetch(`${apiPrefix}/stores/${encodeURIComponent(id)}`, {
-        method: 'DELETE',
-      });
-      if (!r.ok) throw new Error(`${r.status} ${r.statusText}`);
+      const r = await axios.delete(`${apiPrefix}/stores/${encodeURIComponent(id)}`);
+      if (r.status !== 200) throw new Error(`${r.status} ${r.statusText}`);
       await refetch();
     } catch (e) {
       alert((e as any)?.message || 'Fehler beim Löschen');
