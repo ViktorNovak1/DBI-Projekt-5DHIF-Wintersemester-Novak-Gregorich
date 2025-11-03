@@ -1,14 +1,10 @@
+// postgres_service.js
 import pool from "./database.js";
-
-
-
 
 export async function getAllProducts(limit = 10, offset = 0) {
     const result = await pool.query('SELECT * FROM p_products LIMIT $1 OFFSET $2', [limit, offset]);
     return result.rows;
 }
-
-
 
 //-----------------------------------------------
 export async function getAllStores(limit = 10, offset = 0) {
