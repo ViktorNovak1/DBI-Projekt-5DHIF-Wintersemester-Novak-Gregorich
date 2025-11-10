@@ -1,7 +1,7 @@
 #!/usr/bin/env node
 /**
  * Faker-based data generator + loader for:
- * - PostgreSQL 17 (tables: pc_product_categories, p_products, s_stores, o_offers)
+ * - PostgreSQL 18 (tables: pc_product_categories, p_products, s_stores, o_offers)
  * - MongoDB 7
  *     * embedded model   -> collection: s_stores_embedded (with embedded offers)
  *     * referencing model-> collections: pc_product_categories_referencing, p_products_referencing, s_stores_referencing, o_offers_referencing
@@ -28,24 +28,19 @@
  *   node faker_loader_pg_mongo_referencing_and_embedded.js --mongodb-mode both
  */
 
-import os from 'node:os';
 import process from 'node:process';
-import crypto from 'node:crypto';
 import { fileURLToPath } from 'url';
 import yargs from 'yargs';
 import { hideBin } from 'yargs/helpers';
 import seedrandom from 'seedrandom';
 import { faker } from '@faker-js/faker';
-import { v4 as uuidv4 } from 'uuid';
+import { v7 as uuidv7} from 'uuid';
 import pg from 'pg';
 import { MongoClient } from 'mongodb';
 
 // ---------- Configuration (env-overridable) ----------
-const PGHOST = process.env.PGHOST || 'localhost';
 const PGPORT = parseInt(process.env.PGPORT || '5432', 10);
-const PGDATABASE = process.env.PGDATABASE || 'postgres';
-const PGUSER = process.env.PGUSER || 'admin';
-const PGPASSWORD = process.env.PGPASSWORD || 'admin';
+const PG_IS_TIMESCALE = true;
 
 const MONGODB_URI = process.env.MONGODB_URI || 'mongodb://admin:admin@localhost:27017/?authSource=admin';
 const MONGODB_DB = process.env.MONGODB_DB || 'products_playground';
@@ -87,7 +82,7 @@ function generateData({ n_categories, n_products, n_stores, n_offers, rng = Math
   while (categories.length < n_categories) {
     const name = faker.word.noun().slice(0, 64).replace(/^[a-z]/, (m) => m.toUpperCase());
     if (!usedCatNames.has(name)) {
-      categories.push({ id: uuidv4(), name });
+      categories.push({ id: uuidv7(), name });
       usedCatNames.add(name);
     }
   }
@@ -107,8 +102,8 @@ function generateData({ n_categories, n_products, n_stores, n_offers, rng = Math
     while (usedEans.has(e)) e = ean13(rng);
     usedEans.add(e);
     products.push({
-      id: uuidv4(),
-      categoryId: cat ? cat.id : uuidv4(), // should not happen due to check above
+      id: uuidv7(),
+      categoryId: cat ? cat.id : uuidv7(), // should not happen due to check above
       ean: e,
       name: pname,
       retailPrice: Number(retail),
@@ -123,7 +118,7 @@ function generateData({ n_categories, n_products, n_stores, n_offers, rng = Math
     const sname = `${faker.company.name()} Store`.slice(0, 64);
     const url = `https://${faker.internet.domainName()}/${faker.lorem.slug()}`.slice(0, 128);
     if (!usedStoreNames.has(sname) && !usedUrls.has(url)) {
-      stores.push({ id: uuidv4(), name: sname, url });
+      stores.push({ id: uuidv7(), name: sname, url });
       usedStoreNames.add(sname);
       usedUrls.add(url);
     }
@@ -180,11 +175,55 @@ async function loadPostgres(categories, products, stores, offers) {
     return;
   }
 
-  const createSql = [
-    `create table if not exists pc_product_categories (\n  id uuid primary key,\n  name varchar(64) unique not null\n);`,
-    `create table if not exists p_products (\n  id uuid primary key,\n  categoryId uuid not null references pc_product_categories(id),\n  ean varchar(13) unique not null,\n  name varchar(64) not null,\n  retailPrice real not null\n);`,
-    `create table if not exists s_stores (\n  id uuid primary key,\n  name varchar(64) unique not null,\n  url varchar(128) unique not null\n);`,
-    `create table if not exists o_offers (\n  storeId uuid not null references s_stores(id),\n  productId uuid not null references p_products(id),\n  price real not null,\n  amount integer not null,\n  primary key (storeId, productId)\n);`,
+  const createSql = PG_IS_TIMESCALE == false ? [
+    `create table if not exists "pc_product_categories" (
+      "id" uuid primary key,
+      "name" varchar(64) unique not null);`,
+
+    `create table if not exists "p_products" (
+      "id" uuid primary key,
+      "categoryId" uuid not null references "pc_product_categories"("id"),
+      "ean" varchar(13) unique not null,
+      "name" varchar(64) not null,
+      "retailPrice" real not null);`,
+
+
+    `create table if not exists "s_stores" (
+      "id" uuid primary key,
+      "name" varchar(64) unique not null,
+      "url" varchar(128) unique not null);`,
+
+    `create table if not exists "o_offers" (
+      "storeId" uuid not null references "s_stores"("id"),  
+      "productId" uuid not null references "p_products"("id"),  
+      "price" real not null, 
+      "amount" integer not null, 
+      primary key ("storeId", "productId"));`,
+  ] : 
+  [
+    `create table if not exists "pc_product_categories" (
+      "id" uuid primary key,
+      "name" varchar(64) unique not null);`,
+
+    `create table if not exists "p_products" (
+      "id" uuid primary key,
+      "categoryId" uuid not null references "pc_product_categories"("id"),
+      "ean" varchar(13) unique not null,
+      "name" varchar(64) not null,
+      "retailPrice" real not null);`,
+
+
+    `create table if not exists "s_stores" (
+      "id" uuid primary key,
+      "name" varchar(64) unique not null,
+      "url" varchar(128) unique not null);`,
+
+    `create table if not exists "o_offers" (
+      "storeId" uuid not null references "s_stores"("id"),  
+      "productId" uuid not null references "p_products"("id"),  
+      "price" real not null, 
+      "amount" integer not null, 
+      primary key ("storeId", "productId")) with (tsdb.hypertable, tsdb.partition_column = 'storeId');`,
   ];
 
   try {
@@ -192,7 +231,7 @@ async function loadPostgres(categories, products, stores, offers) {
     for (const sql of createSql) {
       await client.query(sql);
     }
-    await client.query('TRUNCATE o_offers, p_products, s_stores, pc_product_categories RESTART IDENTITY CASCADE;');
+    await client.query('TRUNCATE "o_offers", "p_products", "s_stores", "pc_product_categories" RESTART IDENTITY CASCADE;');
     console.log('[PostgreSQL] Cleanup done (tables truncated).');
 
     // Bulk inserts (batched to avoid Postgres 65,535-parameter limit)
@@ -214,9 +253,9 @@ async function loadPostgres(categories, products, stores, offers) {
           values.push(`(${placeholders.join(',')})`);
         }
         const conflict = conflictCols && conflictCols.length
-          ? ` on conflict (${conflictCols.join(', ')}) do nothing`
+          ? ` on conflict (${conflictCols.map(e => `"${e}"`).join(', ')}) do nothing`
           : '';
-        const sql = `insert into ${table} (${cols.join(', ')}) values ${values.join(', ')}${conflict}`;
+        const sql = `insert into "${table}" (${cols.map(e => `"${e}"`).join(', ')}) values ${values.join(', ')}${conflict}`;
         await client.query(sql, params);
       }
     };
@@ -226,7 +265,7 @@ async function loadPostgres(categories, products, stores, offers) {
     await insertMany('s_stores', ['id', 'name', 'url'], stores, ['id']);
     await insertMany('o_offers', ['storeId', 'productId', 'price', 'amount'], offers, ['storeId', 'productId']);
 
-    const count = async (table) => (await client.query(`select count(*) from ${table}`)).rows[0].count;
+    const count = async (table) => (await client.query(`select count(*) from "${table}"`)).rows[0].count;
     const cat_count = await count('pc_product_categories');
     const prod_count = await count('p_products');
     const store_count = await count('s_stores');
@@ -235,10 +274,10 @@ async function loadPostgres(categories, products, stores, offers) {
     await client.query('COMMIT');
     console.log(`[PostgreSQL] Rows now in DB — categories:${cat_count} products:${prod_count} stores:${store_count} offers:${offer_count}`);
   } catch (e) {
-    await client.query('ROLLBACK').catch(() => {});
+    await client.query('ROLLBACK').catch(() => { });
     console.error('[PostgreSQL] ERROR while creating/inserting:', e.message);
   } finally {
-    await client.end().catch(() => {});
+    await client.end().catch(() => { });
   }
 }
 
@@ -334,7 +373,7 @@ async function loadMongoEmbedded(categories, products, stores, offers) {
   } catch (e) {
     console.error('[MongoDB][embedded] Count/Aggregation error:', e.message);
   } finally {
-    await client.close().catch(() => {});
+    await client.close().catch(() => { });
   }
 }
 
@@ -428,7 +467,7 @@ async function loadMongoReferencing(categories, products, stores, offers) {
       console.error('[MongoDB][ref] ERROR while inserting:', e.message);
     }
   } finally {
-    await client.close().catch(() => {});
+    await client.close().catch(() => { });
   }
 }
 
