@@ -34,13 +34,22 @@ import yargs from 'yargs';
 import { hideBin } from 'yargs/helpers';
 import seedrandom from 'seedrandom';
 import { faker } from '@faker-js/faker';
-import { v7 as uuidv7} from 'uuid';
+import { v7 as uuidv7 } from 'uuid';
 import pg from 'pg';
 import { MongoClient } from 'mongodb';
 
 // ---------- Configuration (env-overridable) ----------
+const PGHOST = process.env.PGHOST || 'localhost';
 const PGPORT = parseInt(process.env.PGPORT || '5432', 10);
-const PG_IS_TIMESCALE = true;
+const PGDATABASE = process.env.PGDATABASE || 'postgres';
+const PGUSER = process.env.PGUSER || 'admin';
+const PGPASSWORD = process.env.PGPASSWORD || 'admin';
+
+const TIMESCALE_HOST = process.env.TIMESCALE_HOST || 'localhost';
+const TIMESCALE_PORT = parseInt(process.env.TIMESCALE_PORT || '5432', 10);
+const TIMESCALE_DATABASE = process.env.TIMESCALE_DATABASE || 'postgres';
+const TIMESCALE_USER = process.env.TIMESCALE_USER || 'admin';
+const TIMESCALE_PASSWORD = process.env.TIMESCALE_PASSWORD || '1234';
 
 const MONGODB_URI = process.env.MONGODB_URI || 'mongodb://admin:admin@localhost:27017/?authSource=admin';
 const MONGODB_DB = process.env.MONGODB_DB || 'products_playground';
@@ -156,26 +165,8 @@ function generateData({ n_categories, n_products, n_stores, n_offers, rng = Math
   return { categories, products, stores, offers };
 }
 
-// ---------- PostgreSQL load (cleanup + insert) ----------
 async function loadPostgres(categories, products, stores, offers) {
-  const { Client } = pg;
-  const client = new Client({
-    host: PGHOST,
-    port: PGPORT,
-    database: PGDATABASE,
-    user: PGUSER,
-    password: PGPASSWORD,
-  });
-
-  try {
-    await client.connect();
-    console.log(`[PostgreSQL] Connection successful to ${PGUSER}@${PGHOST}:${PGPORT}/${PGDATABASE}`);
-  } catch (e) {
-    console.error('[PostgreSQL] Connection FAILED:', e.message);
-    return;
-  }
-
-  const createSql = PG_IS_TIMESCALE == false ? [
+  const createSql = [
     `create table if not exists "pc_product_categories" (
       "id" uuid primary key,
       "name" varchar(64) unique not null);`,
@@ -199,13 +190,27 @@ async function loadPostgres(categories, products, stores, offers) {
       "price" real not null, 
       "amount" integer not null, 
       primary key ("storeId", "productId"));`,
-  ] : 
-  [
-    `create table if not exists "pc_product_categories" (
+  ];
+
+  const { Client } = pg;
+  const client = new Client({
+    host: PGHOST,
+    port: PGPORT,
+    database: PGDATABASE,
+    user: PGUSER,
+    password: PGPASSWORD,
+  });
+  loadPostgresOrTimescale(categories, products, stores, offers, client, createSql);
+}
+
+async function loadTimescale(categories, products, stores, offers) {
+  const createSql =
+    [
+      `create table if not exists "pc_product_categories" (
       "id" uuid primary key,
       "name" varchar(64) unique not null);`,
 
-    `create table if not exists "p_products" (
+      `create table if not exists "p_products" (
       "id" uuid primary key,
       "categoryId" uuid not null references "pc_product_categories"("id"),
       "ean" varchar(13) unique not null,
@@ -213,18 +218,39 @@ async function loadPostgres(categories, products, stores, offers) {
       "retailPrice" real not null);`,
 
 
-    `create table if not exists "s_stores" (
+      `create table if not exists "s_stores" (
       "id" uuid primary key,
       "name" varchar(64) unique not null,
       "url" varchar(128) unique not null);`,
 
-    `create table if not exists "o_offers" (
+      `create table if not exists "o_offers" (
       "storeId" uuid not null references "s_stores"("id"),  
       "productId" uuid not null references "p_products"("id"),  
       "price" real not null, 
       "amount" integer not null, 
       primary key ("storeId", "productId")) with (tsdb.hypertable, tsdb.partition_column = 'storeId');`,
-  ];
+    ];
+
+  const { Client } = pg;
+  const client = new Client({
+    host: TIMESCALE_HOST,
+    port: TIMESCALE_PORT,
+    database: TIMESCALE_DATABASE,
+    user: TIMESCALE_USER,
+    password: TIMESCALE_PASSWORD,
+  });
+
+  loadPostgresOrTimescale(categories, products, stores, offers, client, createSql, true);
+}
+
+async function loadPostgresOrTimescale(categories, products, stores, offers, client, createSql, isTimescale = false) {
+  try {
+    await client.connect();
+    console.log(`[${isTimescale ? "Timescale" : "Postgres"}] Connection successful to ${client.user}@${client.host}:${client.port}/${client.database}`);
+  } catch (e) {
+    console.error(`[${isTimescale ? "Timescale" : "Postgres"}] Connection FAILED:`, e.message);
+    return;
+  }
 
   try {
     await client.query('BEGIN');
@@ -232,7 +258,7 @@ async function loadPostgres(categories, products, stores, offers) {
       await client.query(sql);
     }
     await client.query('TRUNCATE "o_offers", "p_products", "s_stores", "pc_product_categories" RESTART IDENTITY CASCADE;');
-    console.log('[PostgreSQL] Cleanup done (tables truncated).');
+    console.log(`[${isTimescale ? "Timescale" : "Postgres"}] Cleanup done (tables truncated).`);
 
     // Bulk inserts (batched to avoid Postgres 65,535-parameter limit)
     const insertMany = async (table, cols, rows, conflictCols, maxParams = 60000) => {
@@ -272,10 +298,10 @@ async function loadPostgres(categories, products, stores, offers) {
     const offer_count = await count('o_offers');
 
     await client.query('COMMIT');
-    console.log(`[PostgreSQL] Rows now in DB — categories:${cat_count} products:${prod_count} stores:${store_count} offers:${offer_count}`);
+    console.log(`[${isTimescale ? "Timescale" : "Postgres"}] Rows now in DB — categories:${cat_count} products:${prod_count} stores:${store_count} offers:${offer_count}`);
   } catch (e) {
     await client.query('ROLLBACK').catch(() => { });
-    console.error('[PostgreSQL] ERROR while creating/inserting:', e.message);
+    console.error(`[${isTimescale ? "Timescale" : "Postgres"}] ERROR while creating/inserting:`, e.message);
   } finally {
     await client.end().catch(() => { });
   }
@@ -508,7 +534,9 @@ async function main() {
   console.log(`Generated: ${categories.length} categories, ${products.length} products, ${stores.length} stores, ${offers.length} offers`);
 
   let load_pg = true;
+  let load_timescale = true;
   let load_mongo = true;
+
   if (args['only-postgres'] && args['only-mongodb']) {
     console.log('Both --only-postgres and --only-mongodb were given; loading into BOTH.');
   } else if (args['only-postgres']) {
@@ -522,15 +550,17 @@ async function main() {
     await loadPostgres(categories, products, stores, offers);
   }
 
+  if (load_timescale) {
+    console.log('\n=== Loading into Timescale ===');
+    await loadTimescale(categories, products, stores, offers);
+  }
+
   if (load_mongo) {
-    if (args['mongodb-mode'] === 'embedded' || args['mongodb-mode'] === 'both') {
-      console.log('\n=== Loading into MongoDB (embedded model) ===');
-      await loadMongoEmbedded(categories, products, stores, offers);
-    }
-    if (args['mongodb-mode'] === 'referencing' || args['mongodb-mode'] === 'both') {
-      console.log('\n=== Loading into MongoDB (referencing model) ===');
-      await loadMongoReferencing(categories, products, stores, offers);
-    }
+    console.log('\n=== Loading into MongoDB (embedded model) ===');
+    await loadMongoEmbedded(categories, products, stores, offers);
+
+    console.log('\n=== Loading into MongoDB (referencing model) ===');
+    await loadMongoReferencing(categories, products, stores, offers);
   }
 }
 
