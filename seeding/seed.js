@@ -38,6 +38,20 @@ import { v7 as uuidv7 } from 'uuid';
 import pg from 'pg';
 import { MongoClient } from 'mongodb';
 
+import { writeAllToCSVs, readAllFromCSVs } from './csv_writer.js'
+
+
+const ExecutionModes = Object.freeze({
+  CSV_DUMP_ONLY: "CSV_DUMP_ONLY",
+  CSV_DUMP_AND_LOAD: "CSV_DUMP_AND_LOAD",
+  LOAD_FROM_CSV_ONLY: "LOAD_FROM_CSV_ONLY"
+})
+
+
+const SELECTED_MODE = process.env.SELECTED_MODE || ExecutionModes.CSV_DUMP_AND_LOAD;
+const SEED = parseInt(process.env.SEED);
+
+
 // ---------- Configuration (env-overridable) ----------
 const PGHOST = process.env.PGHOST || 'localhost';
 const PGPORT = parseInt(process.env.PGPORT || '5432', 10);
@@ -54,11 +68,15 @@ const TIMESCALE_PASSWORD = process.env.TIMESCALE_PASSWORD || '1234';
 const MONGODB_URI = process.env.MONGODB_URI || 'mongodb://admin:admin@localhost:27017/?authSource=admin';
 const MONGODB_DB = process.env.MONGODB_DB || 'products_playground';
 
-// Defaults (can be overridden by CLI)
 const DEFAULT_N_CATEGORIES = 10;
 const DEFAULT_N_STORES = 6;
 const DEFAULT_N_PRODUCTS = 200;
 const DEFAULT_N_OFFERS = 500; // total number of rows in o_offers
+
+const N_CATEGORIES = parseInt(process.env.N_CATEGORIES, 10) || DEFAULT_N_CATEGORIES;
+const N_STORES = parseInt(process.env.N_STORES, 10) || DEFAULT_N_STORES;
+const N_PRODUCTS = parseInt(process.env.N_PRODUCTS, 10) || DEFAULT_N_PRODUCTS;
+const N_OFFERS = parseInt(process.env.N_OFFERS, 10) || DEFAULT_N_OFFERS;
 
 // ---------- EAN-13 generation (valid checksum) ----------
 function ean13(rng = Math.random) {
@@ -78,7 +96,7 @@ function ean13(rng = Math.random) {
 // ---------- Fake data generation ----------
 function generateData({ n_categories, n_products, n_stores, n_offers, rng = Math.random }) {
   if (n_categories < 1 && n_products > 0) {
-    throw new Error('Cannot create products without at least 1 category. Increase --categories or set --products 0.');
+    throw new Error('Cannot create products without at least 1 category. Increase categories or set products 0.');
   }
   if ((n_stores === 0 || n_products === 0) && n_offers > 0) {
     console.warn('[WARN] Offers requested but either stores or products is 0; setting offers to 0.');
@@ -513,54 +531,85 @@ function parseArgs() {
     .parse();
 }
 
+async function GetData() {
+  if (SELECTED_MODE == ExecutionModes.CSV_DUMP_AND_LOAD || SELECTED_MODE == ExecutionModes.CSV_DUMP_ONLY) {
+    console.log('Generating fake data...');
+    const { categories, products, stores, offers } = generateData({
+      n_categories: N_CATEGORIES,
+      n_products: N_PRODUCTS,
+      n_stores: N_STORES,
+      n_offers: N_OFFERS,
+      rng: Math.random,
+    });
+    console.log(`Generated: ${categories.length} categories, ${products.length} products, ${stores.length} stores, ${offers.length} offers`);
+
+    return { categories, products, stores, offers };
+  }
+  else if (SELECTED_MODE == ExecutionModes.LOAD_FROM_CSV_ONLY) {
+    const { categories, products, stores, offers } = await readAllFromCSVs()
+    console.log(`Loaded: ${categories.length} categories, ${products.length} products, ${stores.length} stores, ${offers.length} offers`);
+
+    return { categories, products, stores, offers };
+  }
+
+  /**@type {{categories: Category[], products: Product[], stores: Store[], offers: Offer[]}} */
+  const result = { categories: [], products: [], stores: [], offers: [] };
+  return result;
+}
+
+function IsSelectedModeValid() {
+  for (let mode in ExecutionModes) {
+    if (ExecutionModes[mode] === SELECTED_MODE) return true;
+  }
+  return false;
+}
+
 // ---------- Main ----------
 async function main() {
-  const args = parseArgs();
+  if (!IsSelectedModeValid()) {
+    console.error(`Selected Mode: "${SELECTED_MODE}" is invalid`);
+    return;
+  }
+  console.log(`Selected Mode: "${SELECTED_MODE}"`);
 
-  if (typeof args.seed === 'number' && !Number.isNaN(args.seed)) {
-    console.log(`Seeding RNG with ${args.seed} for reproducible output...`);
-    faker.seed(args.seed);
-    seedrandom(String(args.seed), { global: true }); // seed Math.random
+  if (SEED != undefined && !isNaN(SEED)) {
+    console.log(`Seeding RNG with ${SEED} for reproducible output...`);
+    faker.seed(SEED);
+    seedrandom(String(SEED), { global: true }); // seed Math.random
   }
 
-  console.log('Generating fake data...');
-  const { categories, products, stores, offers } = generateData({
-    n_categories: args.categories,
-    n_products: args.products,
-    n_stores: args.stores,
-    n_offers: args.offers,
-    rng: Math.random,
-  });
-  console.log(`Generated: ${categories.length} categories, ${products.length} products, ${stores.length} stores, ${offers.length} offers`);
-
-  let load_pg = true;
-  let load_timescale = true;
-  let load_mongo = true;
-
-  if (args['only-postgres'] && args['only-mongodb']) {
-    console.log('Both --only-postgres and --only-mongodb were given; loading into BOTH.');
-  } else if (args['only-postgres']) {
-    load_mongo = false;
-  } else if (args['only-mongodb']) {
-    load_pg = false;
+  const { categories, products, stores, offers } = await GetData();
+  if (categories.length == 0 || products.length == 0 || stores.length == 0) {
+    console.error("Data failure")
+    return;
   }
 
-  if (load_pg) {
-    console.log('\n=== Loading into PostgreSQL ===');
-    await loadPostgres(categories, products, stores, offers);
+  if (SELECTED_MODE == ExecutionModes.CSV_DUMP_AND_LOAD || SELECTED_MODE == ExecutionModes.CSV_DUMP_ONLY) {
+    await writeAllToCSVs({categories, products, stores, offers});
   }
 
-  if (load_timescale) {
-    console.log('\n=== Loading into Timescale ===');
-    await loadTimescale(categories, products, stores, offers);
-  }
+  if (SELECTED_MODE == ExecutionModes.CSV_DUMP_AND_LOAD || ExecutionModes.LOAD_FROM_CSV_ONLY) {
+    let load_pg = true;
+    let load_timescale = true;
+    let load_mongo = true;
 
-  if (load_mongo) {
-    console.log('\n=== Loading into MongoDB (embedded model) ===');
-    await loadMongoEmbedded(categories, products, stores, offers);
+    if (load_pg) {
+      console.log('\n=== Loading into PostgreSQL ===');
+      await loadPostgres(categories, products, stores, offers);
+    }
 
-    console.log('\n=== Loading into MongoDB (referencing model) ===');
-    await loadMongoReferencing(categories, products, stores, offers);
+    if (load_timescale) {
+      console.log('\n=== Loading into Timescale ===');
+      await loadTimescale(categories, products, stores, offers);
+    }
+
+    if (load_mongo) {
+      console.log('\n=== Loading into MongoDB (embedded model) ===');
+      await loadMongoEmbedded(categories, products, stores, offers);
+
+      console.log('\n=== Loading into MongoDB (referencing model) ===');
+      await loadMongoReferencing(categories, products, stores, offers);
+    }
   }
 }
 
