@@ -2,7 +2,7 @@
 import { MongoClient, ObjectId } from 'mongodb';
 
 const {
-  MONGO_URI,                    // e.g. mongodb://admin:admin@localhost:27017/?authSource=admin
+  MONGODB_URI,                    // e.g. mongodb://admin:admin@localhost:27017/?authSource=admin
   MONGO_USERNAME,
   MONGO_PASSWORD,
   MONGO_AUTH_SOURCE = 'admin',
@@ -15,16 +15,13 @@ const {
 
 // Build a URI if not provided
 const uri =
-  MONGO_URI ??
+  MONGODB_URI ??
   `mongodb://${MONGO_HOST}:${MONGO_PORT}`;
 
-const client = new MongoClient(uri, {
-  // If MONGO_URI already includes creds, these are ignored
-  auth: {
-    username: MONGO_USERNAME || 'admin',   // <— fallback for local dev
-    password: MONGO_PASSWORD || 'admin',
-  },
-  authSource: MONGO_AUTH_SOURCE,
+const client = new MongoClient(uri,{
+  maxPoolSize: 20,
+  socketTimeoutMS: 3000,
+  connectTimeoutMS: 3000,
 });
 
 let ready;

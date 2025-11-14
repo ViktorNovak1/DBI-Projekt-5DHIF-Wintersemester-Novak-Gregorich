@@ -12,6 +12,7 @@ import {
   getOffersFromStore as pgGetOffersFromStore,
 } from './postgres_service.js';
 
+
 // MONGO: embedded + referencing
 import * as mongoEmbedded from './mongodb_embedded_service.js';
 import * as mongoRef from './mongodb_referencing_service.js';
@@ -78,6 +79,16 @@ mountRoutes('/postgres', {
   getAllStoresWithOfferCount: pgGetAllStoresWithOfferCount,
   getOffersFromStore: pgGetOffersFromStore,
 });
+
+// mountRoutes('/timescale', {
+//   getAllProducts: tsGetAllProducts,
+//   getAllCategories: tsGetAllCategories,
+//   getAllOffers: tsGetAllOffers,
+//   getAllStores: tsGetAllStores,
+//   getAllStoresWithOfferCount: tsGetAllStoresWithOfferCount,
+//   getOffersFromStore: tsGetOffersFromStore,
+// });
+
 
 // New Mongo routes
 mountRoutes('/mongo-embedded', mongoEmbedded);

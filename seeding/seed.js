@@ -89,9 +89,9 @@ function ean13(rng = Math.random) {
 
 // ---------- Types (JSDoc) ----------
 /** @typedef {{id: string, name: string}} Category */
-/** @typedef {{id: string, categoryId: string, ean: string, name: string, retailPrice: number}} Product */
+/** @typedef {{id: string, category_id: string, ean: string, name: string, retailPrice: number}} Product */
 /** @typedef {{id: string, name: string, url: string}} Store */
-/** @typedef {{storeId: string, productId: string, price: number, amount: number}} Offer */
+/** @typedef {{store_id: string, product_id: string, price: number, amount: number}} Offer */
 
 // ---------- Fake data generation ----------
 function generateData({ n_categories, n_products, n_stores, n_offers, rng = Math.random }) {
@@ -130,7 +130,7 @@ function generateData({ n_categories, n_products, n_stores, n_offers, rng = Math
     usedEans.add(e);
     products.push({
       id: uuidv7(),
-      categoryId: cat ? cat.id : uuidv7(), // should not happen due to check above
+      category_id: cat ? cat.id : uuidv7(), // should not happen due to check above
       ean: e,
       name: pname,
       retailPrice: Number(retail),
@@ -173,10 +173,10 @@ function generateData({ n_categories, n_products, n_stores, n_offers, rng = Math
     }
     const sampled = allPairs.slice(0, n_offers);
 
-    for (const [storeId, productId, basePrice] of sampled) {
+    for (const [store_id, product_id, basePrice] of sampled) {
       const price = Math.round(basePrice * (0.6 + rng() * 0.6) * 100) / 100; // 0.6 - 1.2
       const amount = Math.floor(rng() * 251); // 0..250
-      offers.push({ storeId, productId, price: Number(price), amount });
+      offers.push({ store_id, product_id, price: Number(price), amount });
     }
   }
 
@@ -191,7 +191,7 @@ async function loadPostgres(categories, products, stores, offers) {
 
     `create table if not exists "p_products" (
       "id" uuid primary key,
-      "categoryId" uuid not null references "pc_product_categories"("id"),
+      "category_id" uuid not null references "pc_product_categories"("id"),
       "ean" varchar(13) unique not null,
       "name" varchar(64) not null,
       "retailPrice" real not null);`,
@@ -203,11 +203,11 @@ async function loadPostgres(categories, products, stores, offers) {
       "url" varchar(128) unique not null);`,
 
     `create table if not exists "o_offers" (
-      "storeId" uuid not null references "s_stores"("id"),  
-      "productId" uuid not null references "p_products"("id"),  
+      "store_id" uuid not null references "s_stores"("id"),  
+      "product_id" uuid not null references "p_products"("id"),  
       "price" real not null, 
       "amount" integer not null, 
-      primary key ("storeId", "productId"));`,
+      primary key ("store_id", "product_id"));`,
   ];
 
   const { Client } = pg;
@@ -230,7 +230,7 @@ async function loadTimescale(categories, products, stores, offers) {
 
       `create table if not exists "p_products" (
       "id" uuid primary key,
-      "categoryId" uuid not null references "pc_product_categories"("id"),
+      "category_id" uuid not null references "pc_product_categories"("id"),
       "ean" varchar(13) unique not null,
       "name" varchar(64) not null,
       "retailPrice" real not null);`,
@@ -242,11 +242,11 @@ async function loadTimescale(categories, products, stores, offers) {
       "url" varchar(128) unique not null);`,
 
       `create table if not exists "o_offers" (
-      "storeId" uuid not null references "s_stores"("id"),  
-      "productId" uuid not null references "p_products"("id"),  
+      "store_id" uuid not null references "s_stores"("id"),  
+      "product_id" uuid not null references "p_products"("id"),  
       "price" real not null, 
       "amount" integer not null, 
-      primary key ("storeId", "productId")) with (tsdb.hypertable, tsdb.partition_column = 'storeId');`,
+      primary key ("store_id", "product_id")) with (tsdb.hypertable, tsdb.partition_column = 'store_id');`,
     ];
 
   const { Client } = pg;
@@ -305,9 +305,9 @@ async function loadPostgresOrTimescale(categories, products, stores, offers, cli
     };
 
     await insertMany('pc_product_categories', ['id', 'name'], categories, ['id']);
-    await insertMany('p_products', ['id', 'categoryId', 'ean', 'name', 'retailPrice'], products, ['id']);
+    await insertMany('p_products', ['id', 'category_id', 'ean', 'name', 'retailPrice'], products, ['id']);
     await insertMany('s_stores', ['id', 'name', 'url'], stores, ['id']);
-    await insertMany('o_offers', ['storeId', 'productId', 'price', 'amount'], offers, ['storeId', 'productId']);
+    await insertMany('o_offers', ['store_id', 'product_id', 'price', 'amount'], offers, ['store_id', 'product_id']);
 
     const count = async (table) => (await client.query(`select count(*) from "${table}"`)).rows[0].count;
     const cat_count = await count('pc_product_categories');
@@ -364,7 +364,7 @@ async function loadMongoEmbedded(categories, products, stores, offers) {
 
   const offersByStore = new Map();
   for (const o of offers) {
-    const key = o.storeId;
+    const key = o.store_id;
     if (!offersByStore.has(key)) offersByStore.set(key, []);
     offersByStore.get(key).push(o);
   }
@@ -374,15 +374,15 @@ async function loadMongoEmbedded(categories, products, stores, offers) {
     const sOffers = offersByStore.get(s.id) || [];
     const embeddedOffers = [];
     for (const o of sOffers) {
-      const p = prodById.get(o.productId);
+      const p = prodById.get(o.product_id);
       if (!p) continue;
       embeddedOffers.push({
         product: {
           id: p.id,
-          category: catById.get(p.categoryId) || 'Unknown',
+          category: catById.get(p.category_id) || 'Unknown',
           ean: p.ean,
           name: p.name,
-          retailPrice: Number(p.retailPrice),
+          product_id: Number(p.retailPrice),
         },
         price: Number(o.price),
         amount: Number(o.amount),
@@ -452,13 +452,13 @@ async function loadMongoReferencing(categories, products, stores, offers) {
   try {
     await colCat.createIndex({ name: 1 }, { unique: true });
     await colProd.createIndex({ ean: 1 }, { unique: true });
-    await colProd.createIndex({ categoryId: 1 }, { name: 'fk_categoryId' });
+    await colProd.createIndex({ category_id: 1 }, { name: 'fk_category_id' });
     await colStore.createIndex({ name: 1 }, { unique: true });
-    await colStore.createIndex({ url: 1 }, { unique: true });
+    await colStore.createIndex({ url: 1 }, { product_id: true });
 
-    await colOffer.createIndex({ storeId: 1, productId: 1 }, { unique: true, name: 'pk_store_product' });
-    await colOffer.createIndex({ storeId: 1 }, { name: 'fk_storeId' });
-    await colOffer.createIndex({ productId: 1 }, { name: 'fk_productId' });
+    await colOffer.createIndex({ store_id: 1, product_id: 1 }, { unique: true, name: 'pk_store_product' });
+    await colOffer.createIndex({ store_id: 1 }, { name: 'fk_store_id' });
+    await colOffer.createIndex({ product_id: 1 }, { name: 'fk_product_id' });
   } catch (e) {
     console.warn('[MongoDB][ref] Index creation warning:', e.message);
   }
@@ -470,9 +470,9 @@ async function loadMongoReferencing(categories, products, stores, offers) {
     if (products.length) {
       await colProd.insertMany(products.map((p) => ({
         _id: p.id,
-        categoryId: p.categoryId,
+        category_id: p.category_id,
         ean: p.ean,
-        name: p.name,
+        name: p.product_id,
         retailPrice: Number(p.retailPrice),
       })), { ordered: false });
     }
@@ -487,8 +487,8 @@ async function loadMongoReferencing(categories, products, stores, offers) {
       const offerDocs = [];
       let skipped = 0;
       for (const o of offers) {
-        if (storeIds.has(o.storeId) && prodIds.has(o.productId)) {
-          offerDocs.push({ storeId: o.storeId, productId: o.productId, price: Number(o.price), amount: Number(o.amount) });
+        if (storeIds.has(o.store_id) && prodIds.has(o.product_id)) {
+          offerDocs.push({ store_id: o.store_id, product_id: o.product_id, price: Number(o.price), amount: Number(o.amount) });
         } else {
           skipped += 1;
         }
@@ -523,7 +523,7 @@ function parseArgs() {
     .option('categories', { type: 'number', default: DEFAULT_N_CATEGORIES, describe: 'Number of categories.' })
     .option('products', { type: 'number', default: DEFAULT_N_PRODUCTS, describe: 'Number of products.' })
     .option('stores', { type: 'number', default: DEFAULT_N_STORES, describe: 'Number of stores.' })
-    .option('offers', { type: 'number', default: DEFAULT_N_OFFERS, describe: 'Total number of offers rows (unique (storeId, productId) pairs).' })
+    .option('offers', { type: 'number', default: DEFAULT_N_OFFERS, describe: 'Total number of offers rows (unique (store_id, product_id) pairs).' })
     .option('only-postgres', { type: 'boolean', default: false, describe: 'Load only into PostgreSQL.' })
     .option('only-mongodb', { type: 'boolean', default: false, describe: 'Load only into MongoDB.' })
     .option('mongodb-mode', { choices: ['embedded', 'referencing', 'both'], default: 'embedded', describe: 'Choose MongoDB data model to seed: embedded (default), referencing, or both.' })
@@ -589,19 +589,19 @@ async function main() {
   }
 
   if (SELECTED_MODE == ExecutionModes.CSV_DUMP_AND_LOAD || SELECTED_MODE == ExecutionModes.LOAD_FROM_CSV_ONLY) {
-    let load_pg = true;
-    let load_timescale = true;
+    let load_pg = false;
     let load_mongo = true;
+    let load_timescale = true;
 
     if (load_pg) {
       console.log('\n=== Loading into PostgreSQL ===');
       await loadPostgres(categories, products, stores, offers);
     }
 
-    if (load_timescale) {
-      console.log('\n=== Loading into Timescale ===');
-      await loadTimescale(categories, products, stores, offers);
-    }
+    // if (load_timescale) {
+    //   console.log('\n=== Loading into Timescale ===');
+    //   await loadTimescale(categories, products, stores, offers);
+    // }
 
     if (load_mongo) {
       console.log('\n=== Loading into MongoDB (embedded model) ===');

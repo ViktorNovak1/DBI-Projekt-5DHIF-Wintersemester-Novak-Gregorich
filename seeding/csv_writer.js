@@ -5,9 +5,9 @@
  *
  * Types (JSDoc):
  *  @typedef {{id: string, name: string}} Category 
- *  @typedef {{id: string, categoryId: string, ean: string, name: string, retailPrice: number}} Product 
+ *  @typedef {{id: string, category_id: string, ean: string, name: string, retailPrice: number}} Product 
  *  @typedef {{id: string, name: string, url: string}} Store 
- *  @typedef {{storeId: string, productId: string, price: number, amount: number}} Offer 
+ *  @typedef {{store_id: string, product_id: string, price: number, amount: number}} Offer 
  *
  * Exports:
  *  - writeAllToCSVs({ categories, products, stores, offers }, outputDir = './output')
@@ -108,7 +108,7 @@ export async function writeAllToCSVs(
     },
     {
       filename: 'products.csv',
-      headers: ['id', 'categoryId', 'ean', 'name', 'retailPrice'],
+      headers: ['id', 'category_id', 'ean', 'name', 'retailPrice'],
       rows: products
     },
     {
@@ -118,7 +118,7 @@ export async function writeAllToCSVs(
     },
     {
       filename: 'offers.csv',
-      headers: ['storeId', 'productId', 'price', 'amount'],
+      headers: ['store_id', 'product_id', 'price', 'amount'],
       rows: offers
     }
   ];
@@ -139,9 +139,9 @@ export async function writeAllToCSVs(
 }
 
 /** @typedef {{id: string, name: string}} Category */
-/** @typedef {{id: string, categoryId: string, ean: string, name: string, retailPrice: number}} Product */
+/** @typedef {{id: string, category_id: string, ean: string, name: string, retailPrice: number}} Product */
 /** @typedef {{id: string, name: string, url: string}} Store */
-/** @typedef {{storeId: string, productId: string, price: number, amount: number}} Offer */
+/** @typedef {{store_id: string, product_id: string, price: number, amount: number}} Offer */
 
 /**
  * Parse CSV text into an array of rows (each row is an array of cell strings).
@@ -321,7 +321,7 @@ export async function readAllFromCSVs(outputDir = './output') {
 
   const products = productsRaw.map(r => ({
     id: r.id ?? '',
-    categoryId: r.categoryId ?? '',
+    category_id: r.category_id ?? '',
     ean: r.ean ?? '',
     name: r.name ?? '',
     retailPrice: (() => {
@@ -337,8 +337,8 @@ export async function readAllFromCSVs(outputDir = './output') {
   }));
 
   const offers = offersRaw.map(r => ({
-    storeId: r.storeId ?? r.storeid ?? '',
-    productId: r.productId ?? r.productid ?? '',
+    store_id: r.store_id ?? r.store_id ?? '',
+    product_id: r.product_id ?? r.productid ?? '',
     price: (() => {
       const n = toNumber(r.price ?? '');
       return Number.isFinite(n) ? n : NaN;
@@ -365,15 +365,15 @@ export async function readAllFromCSVs(outputDir = './output') {
 //         { id: 'c2', name: 'Snacks' }
 //       ],
 //       products: [
-//         { id: 'p1', categoryId: 'c1', ean: '1234567890123', name: 'Cola, 500ml', retailPrice: 1.99 },
-//         { id: 'p2', categoryId: 'c2', ean: '9876543210987', name: 'Chips "Crunch"', retailPrice: 2.49 }
+//         { id: 'p1', category_id: 'c1', ean: '1234567890123', name: 'Cola, 500ml', retailPrice: 1.99 },
+//         { id: 'p2', category_id: 'c2', ean: '9876543210987', name: 'Chips "Crunch"', retailPrice: 2.49 }
 //       ],
 //       stores: [
 //         { id: 's1', name: 'Corner Shop', url: 'https://corner.example.com' }
 //       ],
 //       offers: [
-//         { storeId: 's1', productId: 'p1', price: 1.79, amount: 10 },
-//         { storeId: 's1', productId: 'p2', price: 2.19, amount: 5 }
+//         { store_id: 's1', product_id: 'p1', price: 1.79, amount: 10 },
+//         { store_id: 's1', product_id: 'p2', price: 2.19, amount: 5 }
 //       ]
 //     };
 

@@ -39,9 +39,9 @@ export let options = (() => {
 
 
 export default function () {
-  const url = `${BASE_URL}/postgres/stores/withOfferCount?page=2&limit=100`;
+  const url = `${BASE_URL}/postgres/stores/?page=2&limit=100`;
 
-  const res = http.get(url, { tags: { name: 'GET /postgres/stores/withOfferCount' } });
+  const res = http.get(url, { tags: { name: 'GET /postgres/stores/' } });
 
   // Basic checks:
   let json;
