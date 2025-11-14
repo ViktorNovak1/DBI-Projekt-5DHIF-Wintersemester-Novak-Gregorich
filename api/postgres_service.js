@@ -1,11 +1,11 @@
 import { Pool } from 'pg';
 
 const postgresPool = new Pool({
-    user: 'admin',
-    host: 'localhost',
-    database: 'postgres',
-    password: 'admin',
-    port: 5432,
+    host: process.env.PGHOST || 'localhost',
+    user: process.env.PGUSER || 'admin',
+    database: process.env.PGDATABASE || 'postgres',
+    password: process.env.PGPASSWORD || 'admin',
+    port: parseInt(process.env.PGPORT || '5432', 10)
 });
 
 export async function getAllProducts(limit = 10, offset = 0) {

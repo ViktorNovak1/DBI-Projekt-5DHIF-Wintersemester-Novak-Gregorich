@@ -1,11 +1,11 @@
 import { Pool } from 'pg';
 
 const timescalePool = new Pool({
-    user: 'admin',
-    host: 'localhost',
-    database: 'postgres',
-    password: 'admin',
-    port: 5432,
+    host: process.env.TIMESCALE_HOST || 'localhost',
+    user: process.env.TIMESCALE_USER || 'admin',
+    database: process.env.TIMESCALE_DATABASE || 'postgres',
+    password: process.env.TIMESCALE_PASSWORD || 'admin',
+    port: parseInt(process.env.TIMESCALE_PORT || '5432', 10)
 });
 
 
