@@ -588,7 +588,7 @@ async function main() {
     await writeAllToCSVs({categories, products, stores, offers});
   }
 
-  if (SELECTED_MODE == ExecutionModes.CSV_DUMP_AND_LOAD || ExecutionModes.LOAD_FROM_CSV_ONLY) {
+  if (SELECTED_MODE == ExecutionModes.CSV_DUMP_AND_LOAD || SELECTED_MODE == ExecutionModes.LOAD_FROM_CSV_ONLY) {
     let load_pg = true;
     let load_timescale = true;
     let load_mongo = true;
