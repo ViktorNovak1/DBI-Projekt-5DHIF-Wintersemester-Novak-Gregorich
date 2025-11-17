@@ -41,7 +41,7 @@ export async function getAllProducts(limit = 10, offset = 0) {
 export async function getAllStores(limit = 10, offset = 0) {
   const db = await getEmbeddedDb();
   return db.collection(COLL_STORES_EMBEDDED).aggregate([
-    { $project: { _id: 0, id: { $toString: '$_id' }, name: 1, url: 1 } },
+    { $project: { _id: 0, id: { $toString: '$id' }, name: 1, url: 1 } },
     ...paginate(offset, limit),
   ]).toArray();
 }
@@ -112,7 +112,7 @@ export async function getAllStoresWithOfferCount(limit = 10, offset = 0) {
     {
       $project: {
         _id: 0,
-        id: { $toString: '$_id' },
+        id: { $toString: '$id' },
         name: 1,
         url: 1,
         offercount: { $size: { $ifNull: ['$offers', []] } }, // matches frontend field

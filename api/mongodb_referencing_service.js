@@ -83,26 +83,21 @@ export async function deleteStoreWhereUrlLike(term) {
     .deleteOne({ url: `/${term}/` });
 }
 
+
 export async function getAllStoresWithOfferCount(limit = 10, offset = 0) {
   const db = await getReferencingDb();
-  return db.collection(COLL_STORES).aggregate([
+  return db.collection(COLL_OFFERS).aggregate([
+    { $group: { _id: "$store_id", offerCount: { $sum: 1 } } },
     {
       $lookup: {
-        from: COLL_OFFERS,
-        let: { storeId: '$_id' },
-        pipeline: [{ $match: { $expr: { $eq: ['$storeId', '$$storeId'] } } }, { $count: 'count' }],
-        as: 'oc',
-      },
-    },
-    {
-      $project: {
-        _id: 0,
-        id: { $toString: '$_id' },
-        name: 1,
-        url: 1,
-        offercount: { $ifNull: [{ $arrayElemAt: ['$oc.count', 0] }, 0] },
-      },
-    },
+        from: "s_stores_referencing",
+        localField: "_id",
+        foreignField: "_id",
+        as: "store"
+      }
+    }, { $unwind: '$store' },
+    { $project: { _id: 0, id: "$_id", offercount: "$offerCount", name: "$store.name", url: "$store.url" } },
+    { $sort: { id: 1 } },
     ...paginate(offset, limit),
   ]).toArray();
 }
@@ -118,12 +113,14 @@ export async function getAllCategories(limit = 10, offset = 0) {
 export async function getAllOffers(limit = 10, offset = 0) {
   const db = await getReferencingDb();
   return db.collection(COLL_OFFERS).aggregate([
-    { $project: {
-      _id: 0,
-      storeId: { $toString: '$storeId' },
-      productId: { $toString: '$productId' },
-      price: 1, retailPrice: 1, amount: 1, ean: 1,
-    }},
+    {
+      $project: {
+        _id: 0,
+        storeId: { $toString: '$storeId' },
+        productId: { $toString: '$productId' },
+        price: 1, retailPrice: 1, amount: 1, ean: 1,
+      }
+    },
     ...paginate(offset, limit),
   ]).toArray();
 }
