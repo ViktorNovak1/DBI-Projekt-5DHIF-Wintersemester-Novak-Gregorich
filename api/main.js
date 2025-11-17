@@ -2,20 +2,12 @@
 import express from 'express';
 import cors from 'cors';
 
-// POSTGRES (existing)
-import {
-  getAllProducts as pgGetAllProducts,
-  getAllCategories as pgGetAllCategories,
-  getAllOffers as pgGetAllOffers,
-  getAllStores as pgGetAllStores,
-  getAllStoresWithOfferCount as pgGetAllStoresWithOfferCount,
-  getOffersFromStore as pgGetOffersFromStore,
-} from './postgres_service.js';
 
 
-// MONGO: embedded + referencing
+
 import * as mongoEmbedded from './mongodb_embedded_service.js';
 import * as mongoRef from './mongodb_referencing_service.js';
+import * as pg from './postgres_service.js';
 
 const app = express();
 const port = process.env.PORT || 3001;
@@ -51,6 +43,31 @@ function mountRoutes(prefix, svc) {
     res.json({ page, limit, stores });
   });
 
+  app.get(`${prefix}/stores/names`, async (req, res) => {
+    const { page, limit, offset } = getPageLimit(req);
+    const stores = await svc.getAllStoreNames(limit, offset);
+    res.json({ page, limit, stores });
+  });
+
+  app.get(`${prefix}/stores/namesDesc`, async (req, res) => {
+    const { page, limit, offset } = getPageLimit(req);
+    const stores = await svc.getAllStoreNamesDesc(limit, offset);
+    res.json({ page, limit, stores });
+  });
+
+  app.get(`${prefix}/stores/filteredName/:filterTerm`, async (req, res) => {
+    const { page, limit, offset } = getPageLimit(req);
+    const stores = await svc.getFilteredStores(limit, offset, req.params.filterTerm);
+    res.json({ page, limit, stores });
+  });
+
+  app.get(`${prefix}/stores/filteredNameProjection/:filterTerm`, async (req, res) => {
+    const { page, limit, offset } = getPageLimit(req);
+    const stores = await svc.getFilteredStoreNames(limit, offset, req.params.filterTerm);
+    res.json({ page, limit, stores });
+  });
+
+
   app.get(`${prefix}/offers/fromStore/:id`, async (req, res) => {
     const { page, limit, offset } = getPageLimit(req);
     const offers = await svc.getOffersFromStore(limit, offset, req.params.id);
@@ -68,29 +85,50 @@ function mountRoutes(prefix, svc) {
     const offers = await svc.getAllOffers(limit, offset);
     res.json({ page, limit, offers });
   });
+
+
+  app.put(`${prefix}/stores/:id`, async (req, res) => {
+
+    const body = req.body;
+
+    const store = {
+      id: req.params.id,
+      url: body.url,
+      name: body.name,
+    };
+
+    const result = await svc.updateStore(store);
+    res.json(result);
+  });
+
+  app.delete(`${prefix}/stores/:id`, async (req, res) => {
+    const result = await svc.deleteStore(req.params.id);
+    res.json(result);
+  });
+
+  app.delete(`${prefix}/stores/url/:term`, async (req, res) => {
+    const result = await svc.deleteStoreWhereUrlLike(req.params.term);
+    res.json(result);
+  });
+
+  app.post(`${prefix}/stores`, async (req, res) => {
+    const body = req.body;
+
+    const store = {
+      id: body.id,
+      url: body.url,
+      name: body.name,
+    };
+
+    const result = await svc.createStore(store);
+    res.json(result);
+  });
 }
 
-// Existing Postgres routes (unchanged)
-mountRoutes('/postgres', {
-  getAllProducts: pgGetAllProducts,
-  getAllCategories: pgGetAllCategories,
-  getAllOffers: pgGetAllOffers,
-  getAllStores: pgGetAllStores,
-  getAllStoresWithOfferCount: pgGetAllStoresWithOfferCount,
-  getOffersFromStore: pgGetOffersFromStore,
-});
 
-// mountRoutes('/timescale', {
-//   getAllProducts: tsGetAllProducts,
-//   getAllCategories: tsGetAllCategories,
-//   getAllOffers: tsGetAllOffers,
-//   getAllStores: tsGetAllStores,
-//   getAllStoresWithOfferCount: tsGetAllStoresWithOfferCount,
-//   getOffersFromStore: tsGetOffersFromStore,
-// });
+mountRoutes('/postgres', pg);
 
 
-// New Mongo routes
 mountRoutes('/mongo-embedded', mongoEmbedded);
 mountRoutes('/mongo-referencing', mongoRef);
 

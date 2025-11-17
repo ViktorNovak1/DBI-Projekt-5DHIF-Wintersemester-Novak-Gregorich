@@ -24,6 +24,65 @@ export async function getAllStores(limit = 10, offset = 0) {
   ]).toArray();
 }
 
+export async function getAllStoreNames(limit = 10, offset = 0) {
+  const db = await getReferencingDb();
+  return db.collection(COLL_STORES).aggregate([
+    { $project: { _id: 0, name: 1 } },
+    ...paginate(offset, limit)
+  ]).toArray();
+}
+
+export async function getAllStoreNamesDesc(limit = 10, offset = 0) {
+  const db = await getReferencingDb();
+  return db.collection(COLL_STORES).aggregate([
+    { $project: { _id: 0, name: 1 } },
+    { $sort: { name: -1 } },
+    ...paginate(offset, limit)
+  ]).toArray();
+}
+
+export async function getFilteredStores(limit = 10, offset = 0, filterTerm) {
+  const db = await getReferencingDb();
+  return db.collection(COLL_STORES).aggregate([
+    { $match: { name: `/${filterTerm}/` } }, //eben ohne sanitization
+    ...paginate(offset, limit),
+  ]).toArray();
+}
+
+export async function getFilteredStoreNames(limit = 10, offset = 0, filterTerm) {
+  const db = await getReferencingDb();
+  return db.collection(COLL_STORES).aggregate([
+    { $project: { _id: 0, name: 1 } },
+    { $match: { name: `/${filterTerm}/` } },
+    { $sort: { name: -1 } },
+    ...paginate(offset, limit)
+  ]).toArray();
+}
+
+export async function updateStore(store) {
+  const db = await getReferencingDb();
+  return db.collection(COLL_STORES)
+    .updateOne({ id: store.id }, { $set: { name: store.name, url: store.url } });
+}
+
+export async function createStore(store) {
+  const db = await getReferencingDb();
+  return db.collection(COLL_STORES).
+    insertOne({ id: store.id, name: store.name, url: store.url, offers: [] });
+}
+
+export async function deleteStore(id) {
+  const db = await getReferencingDb();
+  return db.collection(COLL_STORES)
+    .deleteOne({ id: id });
+}
+
+export async function deleteStoreWhereUrlLike(term) {
+  const db = await getReferencingDb();
+  return db.collection(COLL_STORES)
+    .deleteOne({ url: `/${term}/` });
+}
+
 export async function getAllStoresWithOfferCount(limit = 10, offset = 0) {
   const db = await getReferencingDb();
   return db.collection(COLL_STORES).aggregate([

@@ -184,6 +184,23 @@ function generateData({ n_categories, n_products, n_stores, n_offers, rng = Math
 }
 
 async function loadPostgres(categories, products, stores, offers) {
+  const { Client } = pg;
+  const client = new Client({
+    host: PGHOST,
+    port: PGPORT,
+    database: PGDATABASE,
+    user: PGUSER,
+    password: PGPASSWORD,
+  });
+
+  try {
+    await client.connect();
+    console.log(`[Postgres] Connection successful to ${client.user}@${client.host}:${client.port}/${client.database}`);
+  } catch (e) {
+    console.error(`[Postgres] Connection FAILED:`, e.message);
+    return;
+  }
+
   const createSql = [
     `create table if not exists "pc_product_categories" (
       "id" uuid primary key,
@@ -210,73 +227,13 @@ async function loadPostgres(categories, products, stores, offers) {
       primary key ("store_id", "product_id"));`,
   ];
 
-  const { Client } = pg;
-  const client = new Client({
-    host: PGHOST,
-    port: PGPORT,
-    database: PGDATABASE,
-    user: PGUSER,
-    password: PGPASSWORD,
-  });
-  loadPostgresOrTimescale(categories, products, stores, offers, client, createSql);
-}
-
-async function loadTimescale(categories, products, stores, offers) {
-  const createSql =
-    [
-      `create table if not exists "pc_product_categories" (
-      "id" uuid primary key,
-      "name" varchar(64) unique not null);`,
-
-      `create table if not exists "p_products" (
-      "id" uuid primary key,
-      "category_id" uuid not null references "pc_product_categories"("id"),
-      "ean" varchar(13) unique not null,
-      "name" varchar(64) not null,
-      "retailPrice" real not null);`,
-
-
-      `create table if not exists "s_stores" (
-      "id" uuid primary key,
-      "name" varchar(64) unique not null,
-      "url" varchar(128) unique not null);`,
-
-      `create table if not exists "o_offers" (
-      "store_id" uuid not null references "s_stores"("id"),  
-      "product_id" uuid not null references "p_products"("id"),  
-      "price" real not null, 
-      "amount" integer not null, 
-      primary key ("store_id", "product_id")) with (tsdb.hypertable, tsdb.partition_column = 'store_id');`,
-    ];
-
-  const { Client } = pg;
-  const client = new Client({
-    host: TIMESCALE_HOST,
-    port: TIMESCALE_PORT,
-    database: TIMESCALE_DATABASE,
-    user: TIMESCALE_USER,
-    password: TIMESCALE_PASSWORD,
-  });
-
-  loadPostgresOrTimescale(categories, products, stores, offers, client, createSql, true);
-}
-
-async function loadPostgresOrTimescale(categories, products, stores, offers, client, createSql, isTimescale = false) {
-  try {
-    await client.connect();
-    console.log(`[${isTimescale ? "Timescale" : "Postgres"}] Connection successful to ${client.user}@${client.host}:${client.port}/${client.database}`);
-  } catch (e) {
-    console.error(`[${isTimescale ? "Timescale" : "Postgres"}] Connection FAILED:`, e.message);
-    return;
-  }
-
   try {
     await client.query('BEGIN');
     for (const sql of createSql) {
       await client.query(sql);
     }
     await client.query('TRUNCATE "o_offers", "p_products", "s_stores", "pc_product_categories" RESTART IDENTITY CASCADE;');
-    console.log(`[${isTimescale ? "Timescale" : "Postgres"}] Cleanup done (tables truncated).`);
+    console.log(`[Postgres] Cleanup done (tables truncated).`);
 
     // Bulk inserts (batched to avoid Postgres 65,535-parameter limit)
     const insertMany = async (table, cols, rows, conflictCols, maxParams = 60000) => {
@@ -316,17 +273,17 @@ async function loadPostgresOrTimescale(categories, products, stores, offers, cli
     const offer_count = await count('o_offers');
 
     await client.query('COMMIT');
-    console.log(`[${isTimescale ? "Timescale" : "Postgres"}] Rows now in DB — categories:${cat_count} products:${prod_count} stores:${store_count} offers:${offer_count}`);
+    console.log(`[Postgres] Rows now in DB — categories:${cat_count} products:${prod_count} stores:${store_count} offers:${offer_count}`);
   } catch (e) {
     await client.query('ROLLBACK').catch(() => { });
-    console.error(`[${isTimescale ? "Timescale" : "Postgres"}] ERROR while creating/inserting:`, e.message);
+    console.error(`[Postgres] ERROR while creating/inserting:`, e.message);
   } finally {
     await client.end().catch(() => { });
   }
 }
 
 // ---------- MongoDB (embedded) ----------
-async function loadMongoEmbedded(categories, products, stores, offers) {
+async function loadMongoEmbedded(categories, products, stores, offers, useIndex) {
   let client;
   try {
     client = new MongoClient(MONGODB_URI, { serverSelectionTimeoutMS: 5000 });
@@ -337,26 +294,29 @@ async function loadMongoEmbedded(categories, products, stores, offers) {
     return;
   }
 
+  const collectionName = useIndex ? 's_stores_embedded_index' : 's_stores_embedded';
   const db = client.db(MONGODB_DB);
-  const colStore = db.collection('s_stores_embedded');
+  const colStore = db.collection(collectionName);
 
   try {
     // Cleanup
     const existing = new Set(await db.listCollections().toArray().then((arr) => arr.map((c) => c.name)));
-    if (existing.has('s_stores_embedded')) await colStore.drop();
-    console.log('[MongoDB][embedded] Cleanup done (dropped collections: s_stores_embedded if existed).');
+    if (existing.has(collectionName)) await colStore.drop();
+    console.log(`[MongoDB][embedded] Cleanup done (dropped collections: ${collectionName} if existed).`);
   } catch (e) {
     console.warn('[MongoDB][embedded] Cleanup warning:', e.message);
   }
 
-  try {
-    await colStore.createIndex({ id: 1 }, { unique: true });
-    await colStore.createIndex({ name: 1 }, { unique: true });
-    await colStore.createIndex({ url: 1 }, { unique: true });
-    // Prevent duplicate product offers per store (sparse to allow stores without offers)
-    await colStore.createIndex({ id: 1, 'offers.product.id': 1 }, { unique: true, sparse: true });
-  } catch (e) {
-    console.warn('[MongoDB][embedded] Index creation warning:', e.message);
+  if (useIndex === true) {
+    try {
+      await colStore.createIndex({ id: 1 }, { unique: true });
+      await colStore.createIndex({ name: 1 }, { unique: true });
+      await colStore.createIndex({ url: 1 }, { unique: true });
+      // Prevent duplicate product offers per store (sparse to allow stores without offers)
+      await colStore.createIndex({ id: 1, 'offers.product.id': 1 }, { unique: true, sparse: true });
+    } catch (e) {
+      console.warn('[MongoDB][embedded] Index creation warning:', e.message);
+    }
   }
 
   const catById = new Map(categories.map((c) => [c.id, c.name]));
@@ -422,7 +382,7 @@ async function loadMongoEmbedded(categories, products, stores, offers) {
 }
 
 // ---------- MongoDB (referencing) ----------
-async function loadMongoReferencing(categories, products, stores, offers) {
+async function loadMongoReferencing(categories, products, stores, offers, useIndex) {
   let client;
   try {
     client = new MongoClient(MONGODB_URI, { serverSelectionTimeoutMS: 5000 });
@@ -433,34 +393,42 @@ async function loadMongoReferencing(categories, products, stores, offers) {
     return;
   }
 
+  const catCollectionName = `pc_product_categories_referencing${useIndex ? '_index' : ''}`;
+  const prodCollectionName = `p_products_referencing${useIndex ? '_index' : ''}`;
+  const storeCollectionName = `s_stores_referencing${useIndex ? '_index' : ''}`;
+  const offerCollectionName = `o_offers_referencing${useIndex ? '_index' : ''}`;
+
+
   const db = client.db(MONGODB_DB);
-  const colCat = db.collection('pc_product_categories_referencing');
-  const colProd = db.collection('p_products_referencing');
-  const colStore = db.collection('s_stores_referencing');
-  const colOffer = db.collection('o_offers_referencing');
+  const colCat = db.collection(catCollectionName);
+  const colProd = db.collection(prodCollectionName);
+  const colStore = db.collection(storeCollectionName);
+  const colOffer = db.collection(offerCollectionName);
 
   // Cleanup
   try {
     const names = new Set(await db.listCollections().toArray().then((a) => a.map((c) => c.name)));
-    const toDrop = ['pc_product_categories_referencing', 'p_products_referencing', 's_stores_referencing', 'o_offers_referencing'].filter((n) => names.has(n));
+    const toDrop = [catCollectionName, prodCollectionName, storeCollectionName, offerCollectionName].filter((n) => names.has(n));
     for (const n of toDrop) await db.collection(n).drop();
     console.log(`[MongoDB][ref] Cleanup done (dropped collections: ${toDrop.length ? toDrop.join(', ') : 'none'}).`);
   } catch (e) {
     console.warn('[MongoDB][ref] Cleanup warning:', e.message);
   }
 
-  try {
-    await colCat.createIndex({ name: 1 }, { unique: true });
-    await colProd.createIndex({ ean: 1 }, { unique: true });
-    await colProd.createIndex({ category_id: 1 }, { name: 'fk_category_id' });
-    await colStore.createIndex({ name: 1 }, { unique: true });
-    await colStore.createIndex({ url: 1 }, { product_id: true });
+  if (useIndex === true) {
+    try {
+      await colCat.createIndex({ name: 1 }, { unique: true });
+      await colProd.createIndex({ ean: 1 }, { unique: true });
+      await colProd.createIndex({ category_id: 1 }, { name: 'fk_category_id' });
+      await colStore.createIndex({ name: 1 }, { unique: true });
+      await colStore.createIndex({ url: 1 }, { product_id: true });
 
-    await colOffer.createIndex({ store_id: 1, product_id: 1 }, { unique: true, name: 'pk_store_product' });
-    await colOffer.createIndex({ store_id: 1 }, { name: 'fk_store_id' });
-    await colOffer.createIndex({ product_id: 1 }, { name: 'fk_product_id' });
-  } catch (e) {
-    console.warn('[MongoDB][ref] Index creation warning:', e.message);
+      await colOffer.createIndex({ store_id: 1, product_id: 1 }, { unique: true, name: 'pk_store_product' });
+      await colOffer.createIndex({ store_id: 1 }, { name: 'fk_store_id' });
+      await colOffer.createIndex({ product_id: 1 }, { name: 'fk_product_id' });
+    } catch (e) {
+      console.warn('[MongoDB][ref] Index creation warning:', e.message);
+    }
   }
 
   try {
@@ -513,22 +481,6 @@ async function loadMongoReferencing(categories, products, stores, offers) {
   } finally {
     await client.close().catch(() => { });
   }
-}
-
-// ---------- CLI ----------
-function parseArgs() {
-  return yargs(hideBin(process.argv))
-    .scriptName('faker_loader_pg_mongo_referencing_and_embedded')
-    .option('seed', { type: 'number', describe: 'Random seed for reproducible data. If set, both DBs receive exactly the same data across runs.' })
-    .option('categories', { type: 'number', default: DEFAULT_N_CATEGORIES, describe: 'Number of categories.' })
-    .option('products', { type: 'number', default: DEFAULT_N_PRODUCTS, describe: 'Number of products.' })
-    .option('stores', { type: 'number', default: DEFAULT_N_STORES, describe: 'Number of stores.' })
-    .option('offers', { type: 'number', default: DEFAULT_N_OFFERS, describe: 'Total number of offers rows (unique (store_id, product_id) pairs).' })
-    .option('only-postgres', { type: 'boolean', default: false, describe: 'Load only into PostgreSQL.' })
-    .option('only-mongodb', { type: 'boolean', default: false, describe: 'Load only into MongoDB.' })
-    .option('mongodb-mode', { choices: ['embedded', 'referencing', 'both'], default: 'embedded', describe: 'Choose MongoDB data model to seed: embedded (default), referencing, or both.' })
-    .help()
-    .parse();
 }
 
 async function GetData() {
@@ -585,30 +537,26 @@ async function main() {
   }
 
   if (SELECTED_MODE == ExecutionModes.CSV_DUMP_AND_LOAD || SELECTED_MODE == ExecutionModes.CSV_DUMP_ONLY) {
-    await writeAllToCSVs({categories, products, stores, offers});
+    await writeAllToCSVs({ categories, products, stores, offers });
   }
 
   if (SELECTED_MODE == ExecutionModes.CSV_DUMP_AND_LOAD || SELECTED_MODE == ExecutionModes.LOAD_FROM_CSV_ONLY) {
-    let load_pg = false;
-    let load_mongo = true;
-    let load_timescale = true;
+    let load_pg = false; // eben nicht
+    let load_mongo = true; // eben schon
 
     if (load_pg) {
       console.log('\n=== Loading into PostgreSQL ===');
       await loadPostgres(categories, products, stores, offers);
     }
 
-    // if (load_timescale) {
-    //   console.log('\n=== Loading into Timescale ===');
-    //   await loadTimescale(categories, products, stores, offers);
-    // }
-
     if (load_mongo) {
       console.log('\n=== Loading into MongoDB (embedded model) ===');
-      await loadMongoEmbedded(categories, products, stores, offers);
+      await loadMongoEmbedded(categories, products, stores, offers, false);
+      await loadMongoEmbedded(categories, products, stores, offers, true);
 
       console.log('\n=== Loading into MongoDB (referencing model) ===');
-      await loadMongoReferencing(categories, products, stores, offers);
+      await loadMongoReferencing(categories, products, stores, offers, false);
+      await loadMongoReferencing(categories, products, stores, offers, true);
     }
   }
 }
