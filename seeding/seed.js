@@ -381,6 +381,180 @@ async function loadMongoEmbedded(categories, products, stores, offers, useIndex)
   }
 }
 
+async function loadMongoEmbeddedWithSchema(categories, products, stores, offers) {
+  let client;
+  try {
+    client = new MongoClient(MONGODB_URI, { serverSelectionTimeoutMS: 5000 });
+    await client.db('admin').command({ ping: 1 });
+    console.log('[MongoDB] Connection successful.');
+  } catch (e) {
+    console.error('[MongoDB] Connection FAILED:', e.message);
+    return;
+  }
+
+  const collectionName = 's_stores_embedded_schema';
+  const db = client.db(MONGODB_DB);
+  let colStore = db.collection(collectionName);
+
+
+  const validator = {
+    $jsonSchema: {
+      required: ["_id", "id", "name", "url", "offers"],
+      properties: {
+        _id: {},
+        id:
+        {
+          bsonType: "string",
+          description: "Store UUID",
+          maxLength: 36
+        },
+        name:
+        {
+          bsonType: "string",
+          minLength: 1,
+          maxLength: 64,
+        },
+        url:
+        {
+          bsonType: "string",
+          maxLength: 128,
+        },
+        offers: {
+          bsonType: "array",
+          items: {
+            bsonType: "object",
+            required: ["product", "price", "amount"],
+            properties: {
+              product: {
+                bsonType: "object",
+                required: ["id", "category", "ean", "name", "product_id"],
+                properties: {
+                  id: {
+                    "bsonType": "string",
+                    maxLength: 36
+                  },
+                  category: {
+                    "bsonType": "string",
+                  },
+                  ean: {
+                    "bsonType": "string",
+                    maxLength: 13
+                  },
+                  name: {
+                    "bsonType": "string",
+                    "minLength": 1,
+                    "maxLength": 64,
+                  },
+                  product_id: {
+                    "bsonType": ["double", "int", "decimal"],
+                  }
+                },
+                additionalProperties: false
+              },
+              price: {
+                bsonType: ["double", "int", "decimal"],
+              },
+              amount: {
+                bsonType: "int",
+              }
+            },
+            additionalProperties: false
+          }
+        }
+      },
+      additionalProperties: false
+
+    }
+  };
+
+
+  try {
+    // Cleanup
+    const existing = new Set(await db.listCollections().toArray().then((arr) => arr.map((c) => c.name)));
+    if (existing.has(collectionName)) await colStore.drop();
+    console.log(`[MongoDB][schema] Cleanup done (dropped collections: ${collectionName} if existed).`);
+  } catch (e) {
+    console.warn('[MongoDB][schema] Cleanup warning:', e.message);
+  }
+
+  colStore = await db.createCollection(collectionName, {
+    validator: validator,
+  })
+
+
+  try {
+    await colStore.createIndex({ id: 1 }, { unique: true });
+    await colStore.createIndex({ name: 1 }, { unique: true });
+    await colStore.createIndex({ url: 1 }, { unique: true });
+    // Prevent duplicate product offers per store (sparse to allow stores without offers)
+    await colStore.createIndex({ id: 1, 'offers.product.id': 1 }, { unique: true, sparse: true });
+  } catch (e) {
+    console.warn('[MongoDB][schema] Index creation warning:', e.message);
+  }
+
+
+  const catById = new Map(categories.map((c) => [c.id, c.name]));
+  const prodById = new Map(products.map((p) => [p.id, p]));
+
+  const offersByStore = new Map();
+  for (const o of offers) {
+    const key = o.store_id;
+    if (!offersByStore.has(key)) offersByStore.set(key, []);
+    offersByStore.get(key).push(o);
+  }
+
+  const docs = [];
+  for (const s of stores) {
+    const sOffers = offersByStore.get(s.id) || [];
+    const embeddedOffers = [];
+    for (const o of sOffers) {
+      const p = prodById.get(o.product_id);
+      if (!p) continue;
+      embeddedOffers.push({
+        product: {
+          id: p.id,
+          category: catById.get(p.category_id) || 'Unknown',
+          ean: p.ean,
+          name: p.name,
+          product_id: Number(p.retailPrice),
+        },
+        price: Number(o.price),
+        amount: Number(o.amount),
+      });
+    }
+    docs.push({ id: s.id, name: s.name, url: s.url, offers: embeddedOffers });
+  }
+
+  let inserted = 0;
+  try {
+    if (docs.length) {
+      const res = await colStore.insertMany(docs, { ordered: false });
+      inserted = Object.keys(res.insertedIds).length;
+    }
+  } catch (e) {
+    if (e && e.result && typeof e.result.nInserted === 'number') {
+      console.warn('[MongoDB][schema] Bulk insert warning:', e.message);
+      inserted = e.result.nInserted;
+    } else {
+      console.error('[MongoDB][schema] Error inserting stores:', e.message);
+    }
+  }
+
+  try {
+    const store_count = await colStore.countDocuments({});
+    const total_offers = await colStore.aggregate([
+      { $unwind: { path: '$offers', preserveNullAndEmptyArrays: false } },
+      { $count: 'n' },
+    ]).toArray().then((arr) => (arr[0] ? arr[0].n : 0));
+    console.log(`[MongoDB][schema] Inserts — stores inserted:${inserted}`);
+    console.log(`[MongoDB][schema] Docs now in DB — stores:${store_count} offers:${total_offers}`);
+  } catch (e) {
+    console.error('[MongoDB][schema] Count/Aggregation error:', e.message);
+  } finally {
+    await client.close().catch(() => { });
+  }
+}
+
 // ---------- MongoDB (referencing) ----------
 async function loadMongoReferencing(categories, products, stores, offers, useIndex) {
   let client;
@@ -553,6 +727,8 @@ async function main() {
       console.log('\n=== Loading into MongoDB (embedded model) ===');
       await loadMongoEmbedded(categories, products, stores, offers, false);
       await loadMongoEmbedded(categories, products, stores, offers, true);
+
+      await loadMongoEmbeddedWithSchema(categories, products, stores, offers);
 
       console.log('\n=== Loading into MongoDB (referencing model) ===');
       await loadMongoReferencing(categories, products, stores, offers, false);
