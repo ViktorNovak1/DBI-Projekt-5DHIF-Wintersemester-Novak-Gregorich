@@ -37,6 +37,11 @@ async function ensureConnected() {
   return ready;
 }
 
+export async function getClient() {
+  await ensureConnected();
+  return client;
+}
+
 export async function getEmbeddedDb() {
   await ensureConnected();
   return client.db(MONGO_DB_EMBEDDED);

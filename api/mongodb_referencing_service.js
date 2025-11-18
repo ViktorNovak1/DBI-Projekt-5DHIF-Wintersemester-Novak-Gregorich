@@ -53,7 +53,7 @@ export async function getFilteredStoreNames(limit = 10, offset = 0, filterTerm) 
   const db = await getReferencingDb();
   return db.collection(COLL_STORES).aggregate([
     { $project: { _id: 0, name: 1 } },
-    { $match: { name: `/${filterTerm}/` } },
+    { $match: { name: new RegExp(filterTerm) } },
     { $sort: { name: -1 } },
     ...paginate(offset, limit)
   ]).toArray();

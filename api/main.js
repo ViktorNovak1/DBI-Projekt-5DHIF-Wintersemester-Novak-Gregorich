@@ -5,7 +5,8 @@ import cors from 'cors';
 
 
 
-import * as mongoEmbedded from './mongodb_embedded_service.js';
+import { mongo_embedded, mongo_embedded_index, mongo_embedded_schema } from './mongo_embedded_functions.js';
+
 import * as mongoRef from './mongodb_referencing_service.js';
 import * as pg from './postgres_service.js';
 
@@ -129,7 +130,11 @@ function mountRoutes(prefix, svc) {
 mountRoutes('/postgres', pg);
 
 
-mountRoutes('/mongo-embedded', mongoEmbedded);
+mountRoutes('/mongo-embedded', mongo_embedded);
+mountRoutes('/mongo-embedded-index', mongo_embedded_index);
+mountRoutes('/mongo-embedded-schema', mongo_embedded_schema);
+
+
 mountRoutes('/mongo-referencing', mongoRef);
 
 app.listen(port, () => {

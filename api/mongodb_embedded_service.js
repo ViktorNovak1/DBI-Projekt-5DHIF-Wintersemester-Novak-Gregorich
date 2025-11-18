@@ -1,14 +1,16 @@
 // mongodb_embedded_service.js
-import { getEmbeddedDb, ObjectId } from './mongodb_client.js';
+import { getClient, ObjectId } from './mongodb_client.js';
 
-const COLL_STORES_EMBEDDED = process.env.MONGO_COLL_STORES_EMBEDDED || 's_stores_embedded';
+export const COLL_STORES_EMBEDDED = process.env.MONGO_COLL_STORES_EMBEDDED || 's_stores_embedded';
+export const COLL_STORES_EMBEDDED_INDEX = 's_stores_embedded_index';
+export const COLL_STORES_EMBEDDED_SCHEMA = 's_stores_embedded_schema';
 
 function paginate(offset, limit) { return [{ $skip: offset }, { $limit: limit }]; }
 
-/** PRODUCTS (derive from embedded offers if not separately stored) */
-export async function getAllProducts(limit = 10, offset = 0) {
-  const db = await getEmbeddedDb();
-  return db.collection(COLL_STORES_EMBEDDED).aggregate([
+
+export async function getAllProducts(limit = 10, offset = 0, dbName, collectionName) {
+  const client = await getClient();
+  return client.db(dbName).collection(collectionName).aggregate([
     { $unwind: { path: '$offers', preserveNullAndEmptyArrays: false } },
     {
       $group: {
@@ -38,77 +40,76 @@ export async function getAllProducts(limit = 10, offset = 0) {
 }
 
 /** STORES */
-export async function getAllStores(limit = 10, offset = 0) {
-  const db = await getEmbeddedDb();
-  return db.collection(COLL_STORES_EMBEDDED).aggregate([
+export async function getAllStores(limit = 10, offset = 0, dbName, collectionName) {
+  const client = await getClient();
+  return client.db(dbName).collection(collectionName).aggregate([
     { $project: { _id: 0, id: { $toString: '$id' }, name: 1, url: 1 } },
     ...paginate(offset, limit),
   ]).toArray();
 }
 
-export async function getAllStoreNames(limit = 10, offset = 0) {
-  const db = await getEmbeddedDb();
-  return db.collection(COLL_STORES_EMBEDDED).aggregate([
+export async function getAllStoreNames(limit = 10, offset = 0, dbName, collectionName) {
+  const client = await getClient();
+  return client.db(dbName).collection(collectionName).aggregate([
     { $project: { _id: 0, name: 1 } },
     ...paginate(offset, limit)
   ]).toArray();
 }
 
-export async function getAllStoreNamesDesc(limit = 10, offset = 0) {
-  const db = await getEmbeddedDb();
-  return db.collection(COLL_STORES_EMBEDDED).aggregate([
+export async function getAllStoreNamesDesc(limit = 10, offset = 0, dbName, collectionName) {
+  const client = await getClient();
+  return client.db(dbName).collection(collectionName).aggregate([
     { $project: { _id: 0, name: 1 } },
     { $sort: { name: -1 } },
     ...paginate(offset, limit)
   ]).toArray();
 }
 
-export async function getFilteredStores(limit = 10, offset = 0, filterTerm) {
-  const db = await getEmbeddedDb();
-  return db.collection(COLL_STORES_EMBEDDED).aggregate([
+export async function getFilteredStores(limit = 10, offset = 0, filterTerm, dbName, collectionName) {
+  const client = await getClient();
+  return client.db(dbName).collection(collectionName).aggregate([
     { $match: { name: `/${filterTerm}/` } }, //eben ohne sanitization
     ...paginate(offset, limit),
   ]).toArray();
 }
 
-export async function getFilteredStoreNames(limit = 10, offset = 0, filterTerm) {
-  const db = await getEmbeddedDb();
-  return db.collection(COLL_STORES_EMBEDDED).aggregate([
+export async function getFilteredStoreNames(limit = 10, offset = 0, filterTerm, dbName, collectionName) {
+  const client = await getClient();
+  return client.db(dbName).collection(collectionName).aggregate([
     { $project: { _id: 0, name: 1 } },
-    { $match: { name: `/${filterTerm}/` } },
-    { $sort: { name: -1 } },
+    { $match: { name: new RegExp(filterTerm) } },
     ...paginate(offset, limit)
   ]).toArray();
 }
 
-export async function updateStore(store) {
-  const db = await getEmbeddedDb();
-  return db.collection(COLL_STORES_EMBEDDED)
+export async function updateStore(store, dbName, collectionName) {
+  const client = await getClient();
+  return client.db(dbName).collection(collectionName)
     .updateOne({ id: store.id }, { $set: { name: store.name, url: store.url } });
 }
 
-export async function createStore(store) {
-  const db = await getEmbeddedDb();
-  return db.collection(COLL_STORES_EMBEDDED).
+export async function createStore(store, dbName, collectionName) {
+  const client = await getClient();
+  return client.db(dbName).collection(collectionName).
     insertOne({ id: store.id, name: store.name, url: store.url, offers: [] });
 }
 
-export async function deleteStore(id) {
-  const db = await getEmbeddedDb();
-  return db.collection(COLL_STORES_EMBEDDED)
+export async function deleteStore(id, dbName, collectionName) {
+  const client = await getClient();
+  return client.db(dbName).collection(collectionName)
     .deleteOne({ id: id });
 }
 
-export async function deleteStoreWhereUrlLike(term) {
-  const db = await getEmbeddedDb();
-  return db.collection(COLL_STORES_EMBEDDED)
+export async function deleteStoreWhereUrlLike(term, dbName, collectionName) {
+  const client = await getClient();
+  return client.db(dbName).collection(collectionName)
     .deleteOne({ url: `/${term}/` });
 }
 
 
-export async function getAllStoresWithOfferCount(limit = 10, offset = 0) {
-  const db = await getEmbeddedDb();
-  return db.collection(COLL_STORES_EMBEDDED).aggregate([
+export async function getAllStoresWithOfferCount(limit = 10, offset = 0, dbName, collectionName) {
+  const client = await getClient();
+  return client.db(dbName).collection(collectionName).aggregate([
     {
       $project: {
         _id: 0,
@@ -123,9 +124,9 @@ export async function getAllStoresWithOfferCount(limit = 10, offset = 0) {
 }
 
 /** CATEGORIES (derive from embedded offers) */
-export async function getAllCategories(limit = 10, offset = 0) {
-  const db = await getEmbeddedDb();
-  return db.collection(COLL_STORES_EMBEDDED).aggregate([
+export async function getAllCategories(limit = 10, offset = 0, dbName, collectionName) {
+  const client = await getClient();
+  return client.db(dbName).collection(collectionName).aggregate([
     { $unwind: '$offers' },
     { $project: { cat: '$offers.product.category' } },
     { $match: { cat: { $ne: null } } },
@@ -142,9 +143,9 @@ export async function getAllCategories(limit = 10, offset = 0) {
 }
 
 /** OFFERS (flatten) */
-export async function getAllOffers(limit = 10, offset = 0) {
-  const db = await getEmbeddedDb();
-  return db.collection(COLL_STORES_EMBEDDED).aggregate([
+export async function getAllOffers(limit = 10, offset = 0, dbName, collectionName) {
+  const client = await getClient();
+  return client.db(dbName).collection(collectionName).aggregate([
     { $unwind: '$offers' },
     {
       $project: {
@@ -163,10 +164,10 @@ export async function getAllOffers(limit = 10, offset = 0) {
   ]).toArray();
 }
 
-export async function getOffersFromStore(limit = 10, offset = 0, storeId) {
-  const db = await getEmbeddedDb();
+export async function getOffersFromStore(limit = 10, offset = 0, storeId, dbName, collectionName) {
+  const client = await getClient();
   const _id = new ObjectId(storeId);
-  return db.collection(COLL_STORES_EMBEDDED).aggregate([
+  return client.db(dbName).collection(collectionName).aggregate([
     { $match: { _id } },
     { $unwind: '$offers' },
     {
