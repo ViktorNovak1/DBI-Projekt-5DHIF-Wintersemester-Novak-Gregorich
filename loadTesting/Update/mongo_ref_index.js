@@ -5,7 +5,7 @@ import { test_options, path } from './options.js';
 import { uuidv4 } from 'https://jslib.k6.io/k6-utils/1.4.0/index.js'
 
 const BASE_URL = __ENV.BASE_URL || 'http://localhost:3001';
-const dbType = 'mongo-embedded'
+const dbType = 'mongo-referencing-index'
 const url = `${BASE_URL}/${dbType}${path}`;
 
 
@@ -16,7 +16,7 @@ export function setup() {
     const res = http.get(`${BASE_URL}/${dbType}/stores`);
     const body = JSON.parse(res.body);
 
-    //console.log(body);
+    console.log(body);
 
     return body.stores[0];
 }

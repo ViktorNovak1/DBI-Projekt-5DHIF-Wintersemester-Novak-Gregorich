@@ -103,7 +103,7 @@ export async function deleteStore(id, dbName, collectionName) {
 export async function deleteStoreWhereUrlLike(term, dbName, collectionName) {
   const client = await getClient();
   return client.db(dbName).collection(collectionName)
-    .deleteOne({ url: `/${term}/` });
+    .deleteOne({ url: new RegExp(term) });
 }
 
 

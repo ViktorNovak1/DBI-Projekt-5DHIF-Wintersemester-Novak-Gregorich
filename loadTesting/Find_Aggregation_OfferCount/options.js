@@ -2,7 +2,7 @@ export let test_options = (() => {
 
     return {
     stages: [
-      { duration: '20s', target: 10000 }, 
+      { duration: '30s', target: 20000 }, 
     ],
     thresholds: {
       'http_req_duration': ['p(95)<1000'],

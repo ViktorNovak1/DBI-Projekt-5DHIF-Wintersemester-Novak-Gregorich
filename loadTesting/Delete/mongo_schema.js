@@ -7,7 +7,7 @@ import { uuidv4 } from 'https://jslib.k6.io/k6-utils/1.4.0/index.js'
 import { randomItem } from 'https://jslib.k6.io/k6-utils/1.2.0/index.js';
 
 const BASE_URL = __ENV.BASE_URL || 'http://localhost:3001';
-const dbType = 'mongo-embedded'
+const dbType = 'mongo-embedded-schema'
 const url = `${BASE_URL}/${dbType}${path}`;
 
 

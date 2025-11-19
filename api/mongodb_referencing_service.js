@@ -67,7 +67,7 @@ export async function getFilteredStoreNames(limit = 10, offset = 0, filterTerm, 
 export async function updateStore(store, dbName, collectionName) {
   const client = await getClient();
   return client.db(dbName).collection(collectionName)
-    .updateOne({ id: store.id }, { $set: { name: store.name, url: store.url } });
+    .updateOne({ _id: store.id }, { $set: { name: store.name, url: store.url } });
 }
 
 export async function createStore(store, dbName, collectionName) {
@@ -79,7 +79,7 @@ export async function createStore(store, dbName, collectionName) {
 export async function deleteStore(id, dbName, collectionName) {
   const client = await getClient();
   return client.db(dbName).collection(collectionName)
-    .deleteOne({ id: id });
+    .deleteOne({ _id: id });
 }
 
 export async function deleteStoreWhereUrlLike(term, dbName, collectionName) {

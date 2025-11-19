@@ -1,7 +1,7 @@
 import http from 'k6/http';
 import { check, group, randomSeed, sleep } from 'k6';
-import { test_options, path } from './options.js';
-import { SharedArray } from 'k6/data';
+import { test_options, path,amount_stores_to_delete } from './options.js';
+
 
 import { uuidv4 } from 'https://jslib.k6.io/k6-utils/1.4.0/index.js'
 import { randomItem } from 'https://jslib.k6.io/k6-utils/1.2.0/index.js';
@@ -18,7 +18,7 @@ const SEED = 54232342;
 export function setup() {
 
     const stores = [];
-    for (let i = 0; i < 1000; ++i) {
+    for (let i = 0; i < amount_stores_to_delete; ++i) {
         const uuid = uuidv4();
         const store = {
             id: uuid,

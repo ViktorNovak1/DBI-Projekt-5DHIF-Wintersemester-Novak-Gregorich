@@ -12,3 +12,5 @@ export let test_options = (() => {
 })();
 
 export let path = `/stores`;
+
+export const amount_stores_to_delete = 1000;

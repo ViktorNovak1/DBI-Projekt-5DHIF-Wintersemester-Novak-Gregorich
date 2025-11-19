@@ -20,8 +20,8 @@ const uri =
 
 const client = new MongoClient(uri,{
   maxPoolSize: 20,
-  socketTimeoutMS: 3000,
-  connectTimeoutMS: 3000,
+  socketTimeoutMS: 30000,
+  connectTimeoutMS: 30000,
 });
 
 let ready;
