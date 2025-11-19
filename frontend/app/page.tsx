@@ -1,4 +1,4 @@
-// app/page.tsx
+// page.tsx
 'use client';
 
 import React, { useEffect, useMemo, useState } from 'react';
@@ -37,28 +37,50 @@ type StoreRow = {
   id: string;
   name: string;
   url: string;
-  offercount?: string | number;
+  offercount?: number;
 };
 
 type ListResponse = {
   page?: number;
   limit?: number;
   total?: number;
-  stores?: StoreRow[];
-  products?: StoreRow[];
-  data?: StoreRow[];
+  stores?: any[];
+  products?: any[];
+  data?: any[];
+  items?: any[];
 };
+
+function normalizeStoreRow(row: any): StoreRow {
+  const id = String(row.id ?? row._id ?? '');
+  const name = String(row.name ?? '');
+  const url = String(row.url ?? '');
+  const offerRaw = row.offercount ?? row.offerCount ?? row.offers ?? row.offer ?? 0;
+  const offercount = Number.isFinite(Number(offerRaw)) ? Number(offerRaw) : 0;
+
+  return { id, name, url, offercount };
+}
 
 function pickRows(json: any): StoreRow[] {
   if (!json) return [];
-  if (Array.isArray(json.stores)) return json.stores;
-  if (Array.isArray(json.products)) return json.products;
-  if (Array.isArray(json.data)) return json.data;
-  if (Array.isArray(json.items)) return json.items;
-  return [];
+  const raw: any[] =
+    Array.isArray(json.stores) ? json.stores :
+    Array.isArray(json.products) ? json.products :
+    Array.isArray(json.data) ? json.data :
+    Array.isArray(json.items) ? json.items :
+    [];
+
+  return raw
+    .map(normalizeStoreRow)
+    .filter((r) => r.id && r.name); // nur sinnvolle Zeilen behalten
 }
 
-function useStores(baseUrl: string, prefix: string, page: number, limit: number) {
+function useStores(
+  baseUrl: string,
+  prefix: string,
+  page: number,
+  limit: number,
+  reloadToken: number
+) {
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [rows, setRows] = useState<StoreRow[]>([]);
@@ -76,14 +98,17 @@ function useStores(baseUrl: string, prefix: string, page: number, limit: number)
       .then((r) => {
         if (cancelled) return;
         const json: ListResponse = r.data;
-        setRows(pickRows(json));
-        setTotal(json.total);
+        const picked = pickRows(json);
+        setRows(picked);
+        // Backend liefert kein total -> optional lesen, sonst undefined
+        setTotal(typeof json.total === 'number' ? json.total : undefined);
         setLoading(false);
       })
       .catch((e) => {
         if (cancelled) return;
         setError(e?.message || 'Fetch error');
         setRows([]);
+        setTotal(undefined);
         setLoading(false);
       });
 
@@ -91,7 +116,7 @@ function useStores(baseUrl: string, prefix: string, page: number, limit: number)
       cancelled = true;
       controller.abort();
     };
-  }, [baseUrl, prefix, page, limit]);
+  }, [baseUrl, prefix, page, limit, reloadToken]);
 
   return { loading, error, rows, total };
 }
@@ -139,7 +164,15 @@ export default function Page() {
 
   const [page, setPage] = useState(1);
   const [limit, setLimit] = useState(10);
-  const { loading, error, rows, total } = useStores(API_BASE_URL, apiPrefix, page, limit);
+  const [reloadToken, setReloadToken] = useState(0);
+
+  const { loading, error, rows, total } = useStores(
+    API_BASE_URL,
+    apiPrefix,
+    page,
+    limit,
+    reloadToken
+  );
 
   const totalPages = useMemo(() => {
     if (typeof total === 'number' && total >= 0)
@@ -164,8 +197,20 @@ export default function Page() {
     setMsg(null);
   }
 
-  async function refetch() {
-    setPage((p) => p);
+  function refetch() {
+    setReloadToken((t) => t + 1);
+  }
+
+  function makeId() {
+    try {
+      if (typeof crypto !== 'undefined' && 'randomUUID' in crypto) {
+        return crypto.randomUUID();
+      }
+    } catch {
+      // ignore
+    }
+    // Fallback, falls randomUUID nicht existiert
+    return Math.random().toString(36).slice(2) + Date.now().toString(36);
   }
 
   async function onCreateSubmit(e: React.FormEvent) {
@@ -177,14 +222,18 @@ export default function Page() {
     try {
       setBusy(true);
       setMsg(null);
+
+      const id = makeId();
+
       const r = await axios.post(`${API_BASE_URL}${apiPrefix}/stores`, {
+        id,
         name: formName.trim(),
         url: formUrl.trim(),
       });
       if (r.status !== 200) throw new Error(`${r.status} ${r.statusText}`);
       setCreateOpen(false);
       resetForm();
-      await refetch();
+      refetch();
     } catch (e: any) {
       setMsg(e?.message || 'Fehler beim Erstellen');
     } finally {
@@ -221,7 +270,7 @@ export default function Page() {
       setEditOpen(false);
       setEditId(null);
       resetForm();
-      await refetch();
+      refetch();
     } catch (e: any) {
       setMsg(e?.message || 'Fehler beim Aktualisieren');
     } finally {
@@ -237,7 +286,7 @@ export default function Page() {
         `${API_BASE_URL}${apiPrefix}/stores/${encodeURIComponent(id)}`
       );
       if (r.status !== 200) throw new Error(`${r.status} ${r.statusText}`);
-      await refetch();
+      refetch();
     } catch (e) {
       alert((e as any)?.message || 'Fehler beim Löschen');
     } finally {
@@ -258,6 +307,7 @@ export default function Page() {
               if (!v) return;
               setSource(v as Source);
               setPage(1);
+              refetch();
             }}
             className="border rounded-md p-1"
           >
@@ -281,6 +331,7 @@ export default function Page() {
             onValueChange={(v) => {
               setPage(1);
               setLimit(Number(v));
+              refetch();
             }}
           >
             <SelectTrigger id="page-size" className="w-28">
@@ -377,16 +428,23 @@ export default function Page() {
                         variant="outline"
                         size="sm"
                         onClick={() => openEdit(row)}
+                        disabled={busy}
                       >
                         Bearbeiten
                       </Button>
                       <Button
-                        variant="destructive"
-                        size="sm"
-                        onClick={() => onDelete(row.id)}
-                      >
-                        Löschen
-                      </Button>
+                      variant="destructive"
+                      size="sm"
+                      onClick={() => onDelete(row.id)}
+                      disabled={busy || Number(row.offercount ?? 0) > 0}
+                      title={
+                        Number(row.offercount ?? 0) > 0
+                          ? 'Dieser Store hat noch Offers und kann nicht gelöscht werden.'
+                          : ''
+                      }
+                    >
+                      Löschen
+                    </Button>
                     </div>
                   </TableCell>
                 </TableRow>
