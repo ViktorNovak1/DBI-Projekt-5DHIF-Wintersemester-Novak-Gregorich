@@ -7,7 +7,8 @@ import cors from 'cors';
 
 import { mongo_embedded, mongo_embedded_index, mongo_embedded_schema } from './mongo_embedded_functions.js';
 
-import * as mongoRef from './mongodb_referencing_service.js';
+import { mongo_referencing, mongo_referencing_index,} from './mongodb_referencing_functions.js';
+
 import * as pg from './postgres_service.js';
 
 const app = express();
@@ -135,7 +136,8 @@ mountRoutes('/mongo-embedded-index', mongo_embedded_index);
 mountRoutes('/mongo-embedded-schema', mongo_embedded_schema);
 
 
-mountRoutes('/mongo-referencing', mongoRef);
+mountRoutes('/mongo-referencing', mongo_referencing);
+mountRoutes('/mongo-referencing-index', mongo_referencing_index);
 
 app.listen(port, () => {
   console.log(`Server is running on port ${port}`);
